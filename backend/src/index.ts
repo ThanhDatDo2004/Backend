@@ -30,7 +30,10 @@ app.use(compression());
 const PORT = process.env.PORT || 5050;
 
 import authRouter from "./routes/auth.routes";
+import fieldRouter from "./routes/field.routes";
+
 app.use("/api/auth", authRouter);
+app.use("/api/fields", fieldRouter);
 //error handler 404
 app.use((req: Request, res: Response, next: NextFunction) => {
   const error = new ApiError(404, `Not Found - ${req.originalUrl}`);
