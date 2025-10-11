@@ -79,6 +79,40 @@ const fieldController = {
       next(error);
     }
   },
+
+  async availability(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const date =
+        typeof req.query.date === "string" ? req.query.date.trim() : undefined;
+
+      if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Định dạng ngày không hợp lệ (YYYY-MM-DD)"
+          )
+        );
+      }
+
+      const slots = await fieldService.getAvailability(id, date);
+
+      return apiResponse.success(
+        res,
+        { field_code: id, date: date ?? null, slots },
+        "Fetched field availability successfully",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 export default fieldController;

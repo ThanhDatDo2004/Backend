@@ -139,6 +139,20 @@ const fieldService = {
     return items[0] ?? null;
   },
 
+  async getAvailability(fieldCode: number, playDate?: string) {
+    const slots = await fieldModel.listSlots(fieldCode, playDate);
+    return slots.map((slot) => ({
+      slot_id: slot.slot_id,
+      field_code: slot.field_code,
+      play_date: slot.play_date,
+      start_time: slot.start_time,
+      end_time: slot.end_time,
+      status: slot.status,
+      hold_expires_at: slot.hold_expires_at,
+      is_available: slot.status === "available",
+    }));
+  },
+
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {
     if (!rows.length) return [];
     const fieldCodes = rows.map((row) => row.field_code);

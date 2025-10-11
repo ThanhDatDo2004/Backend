@@ -45,3 +45,43 @@ export async function sendResetPasswordEmail(to: string, resetLink: string) {
   });
   return info;
 }
+
+type ShopRequestPayload = {
+  full_name: string;
+  email: string;
+  phone_number: string;
+  address: string;
+  message?: string;
+};
+
+export async function sendShopRequestEmail(payload: ShopRequestPayload) {
+  const appName = process.env.APP_NAME || "ThueRe";
+  const recipient =
+    process.env.SHOP_REQUEST_RECIPIENT || "kubjmisu1999@gmail.com";
+
+  const { full_name, email, phone_number, address, message } = payload;
+
+  const info = await transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to: recipient,
+    subject: `[${appName}] Yêu cầu mở shop mới`,
+    text: `
+Yêu cầu mở shop mới:
+- Họ và tên: ${full_name}
+- Email: ${email}
+- Số điện thoại: ${phone_number}
+- Địa chỉ: ${address}
+- Tin nhắn: ${message || "(không có)"}`,
+    html: `
+      <h2>Yêu cầu mở shop mới</h2>
+      <p><strong>Họ và tên:</strong> ${full_name}</p>
+      <p><strong>Email:</strong> ${email}</p>
+      <p><strong>Số điện thoại:</strong> ${phone_number}</p>
+      <p><strong>Địa chỉ:</strong> ${address}</p>
+      <p><strong>Tin nhắn:</strong></p>
+      <p>${(message || "(không có)").replace(/\n/g, "<br/>")}</p>
+    `,
+  });
+
+  return info;
+}

@@ -34,6 +34,16 @@ export type FieldRow = {
   shop_is_approved: string | null;
 };
 
+export type FieldSlotRow = {
+  slot_id: number;
+  field_code: number;
+  play_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+  hold_expires_at: string | null;
+};
+
 const BASE_SELECT = `
   SELECT
     f.FieldCode AS field_code,
@@ -198,6 +208,29 @@ const fieldModel = {
       ORDER BY FieldCode, SortOrder, ImageCode
     `;
     return await queryService.execQueryList(query, [fieldCodes]);
+  },
+
+  async listSlots(fieldCode: number, playDate?: string) {
+    const params: any[] = [fieldCode];
+    let clause = "WHERE FieldCode = ?";
+    if (playDate) {
+      clause += " AND PlayDate = ?";
+      params.push(playDate);
+    }
+    const query = `
+      SELECT
+        SlotID AS slot_id,
+        FieldCode AS field_code,
+        DATE_FORMAT(PlayDate, '%Y-%m-%d') AS play_date,
+        DATE_FORMAT(StartTime, '%H:%i') AS start_time,
+        DATE_FORMAT(EndTime, '%H:%i') AS end_time,
+        Status AS status,
+        DATE_FORMAT(HoldExpiresAt, '%Y-%m-%d %H:%i:%s') AS hold_expires_at
+      FROM Field_Slots
+      ${clause}
+      ORDER BY PlayDate, StartTime
+    `;
+    return (await queryService.execQueryList(query, params)) as FieldSlotRow[];
   },
 
   async listReviews(fieldCodes: number[]) {
