@@ -3,6 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import fieldService from "../services/field.service";
 import ApiError from "../utils/apiErrors";
+import bookingService from "../services/booking.service";
 
 const toNumber = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -22,11 +23,20 @@ const fieldController = {
         location,
         priceMin,
         priceMax,
-        page,
-        pageSize,
+        page: pageParam,
+        pageSize: pageSizeParam,
         sortBy,
         sortDir,
+        status,
+        shopStatus,
       } = req.query;
+
+      const sortKey =
+        sortBy === "price" || sortBy === "rating" || sortBy === "name"
+          ? sortBy
+          : undefined;
+      const sortDirection =
+        sortDir === "desc" || sortDir === "asc" ? sortDir : undefined;
 
       const data = await fieldService.list({
         search: typeof search === "string" ? search : undefined,
@@ -34,19 +44,65 @@ const fieldController = {
         location: typeof location === "string" ? location : undefined,
         priceMin: toNumber(priceMin),
         priceMax: toNumber(priceMax),
-        page: toNumber(page),
-        pageSize: toNumber(pageSize),
-        sortBy:
-          sortBy === "price" || sortBy === "rating" || sortBy === "name"
-            ? sortBy
-            : undefined,
-        sortDir:
-          sortDir === "desc" || sortDir === "asc" ? sortDir : undefined,
+        page: toNumber(pageParam),
+        pageSize: toNumber(pageSizeParam),
+        sortBy: sortKey,
+        sortDir: sortDirection,
+        status: typeof status === "string" ? status : undefined,
+        shopStatus: typeof shopStatus === "string" ? shopStatus : undefined,
       });
+
+      const {
+        items,
+        facets,
+        summary,
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext,
+        hasPrev,
+        pagination,
+      } = data;
+
+      const appliedFilters = {
+        search: typeof search === "string" ? search : undefined,
+        sportType: typeof sportType === "string" ? sportType : undefined,
+        location: typeof location === "string" ? location : undefined,
+        priceMin: toNumber(priceMin),
+        priceMax: toNumber(priceMax),
+        status: typeof status === "string" ? status : undefined,
+        shopStatus: typeof shopStatus === "string" ? shopStatus : undefined,
+        sortBy: sortKey,
+        sortDir: sortDirection,
+      };
+
+      const paginationMeta =
+        pagination ?? {
+          total,
+          page,
+          pageSize,
+          totalPages,
+          hasNext,
+          hasPrev,
+        };
 
       return apiResponse.success(
         res,
-        data,
+        {
+          items,
+          total,
+          page,
+          pageSize,
+          facets,
+          summary,
+          meta: {
+            ...paginationMeta,
+            pagination: paginationMeta,
+            filters: appliedFilters,
+            appliedFilters,
+          },
+        },
         "Fetched fields successfully",
         StatusCodes.OK
       );
@@ -107,6 +163,52 @@ const fieldController = {
         res,
         { field_code: id, date: date ?? null, slots },
         "Fetched field availability successfully",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async confirmBooking(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const { slots, customer, payment_method, total_price, notes } =
+        req.body ?? {};
+
+      if (!Array.isArray(slots) || !slots.length) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Vui lòng chọn ít nhất một khung giờ để đặt sân."
+          )
+        );
+      }
+
+      const result = await bookingService.confirmFieldBooking(id, {
+        slots,
+        customer: typeof customer === "object" ? customer : undefined,
+        payment_method:
+          typeof payment_method === "string" ? payment_method : undefined,
+        total_price:
+          typeof total_price === "number" ? total_price : undefined,
+        notes: typeof notes === "string" ? notes : undefined,
+      });
+
+      return apiResponse.success(
+        res,
+        {
+          ...result,
+          payment_method:
+            typeof payment_method === "string" ? payment_method : "mock_wallet",
+        },
+        "Thanh toán ảo thành công. Khung giờ đã được giữ chỗ.",
         StatusCodes.OK
       );
     } catch (error) {

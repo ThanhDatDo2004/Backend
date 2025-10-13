@@ -50,7 +50,34 @@ const authController = {
         );
       }
 
-      const { PasswordHash, ...dataUser } = user as { PasswordHash: string };
+      const {
+        PasswordHash,
+        IsActive,
+        _destroy,
+        ...dataUser
+      } = user as {
+        PasswordHash: string;
+        IsActive?: number | null;
+        _destroy?: number | null;
+      };
+
+      if (Number(_destroy ?? 0) === 1) {
+        return next(
+          new ApiError(
+            StatusCodes.LOCKED,
+            "Tài khoản đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên."
+          )
+        );
+      }
+
+      if (!Number(IsActive ?? 0)) {
+        return next(
+          new ApiError(
+            StatusCodes.LOCKED,
+            "Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên."
+          )
+        );
+      }
       const isMatch = await authService.verifyPassword(password, PasswordHash);
       if (!isMatch) {
         return next(
@@ -58,12 +85,20 @@ const authController = {
         );
       }
 
-      const token = await authService.generateAccessToken(dataUser);
-      const refreshToken = await authService.generateRefreshToken(dataUser);
+      const normalizedUser = {
+        ...dataUser,
+        IsActive,
+        isActive: Number(IsActive ?? 0) ? 1 : 0,
+      };
+
+      const token = await authService.generateAccessToken(normalizedUser);
+      const refreshToken = await authService.generateRefreshToken(
+        normalizedUser
+      );
 
       return apiResponse.success(
         res,
-        { ...dataUser, token, refreshToken },
+        { ...normalizedUser, token, refreshToken },
         "Login Success",
         StatusCodes.OK
       );

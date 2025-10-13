@@ -1,4 +1,5 @@
 import { RowDataPacket } from "mysql2";
+import { PoolConnection } from "mysql2/promise";
 import pool from "../configs/db.config";
 import { IError } from "../interfaces/common";
 const queryService = {
@@ -37,19 +38,19 @@ const queryService = {
          throw error;
       }
    },
-   execTransaction: async (logBase: string, callback: (conn: any) => Promise<any>): Promise<boolean> => {
-      const connection = await pool.getConnection(); // get dedicated connection
+   execTransaction: async <T>(
+      logBase: string,
+      callback: (conn: PoolConnection) => Promise<T>
+   ): Promise<T> => {
+      const connection = await pool.getConnection();
       try {
          await connection.beginTransaction();
-
-         // Run user-defined logic inside transaction
-         await callback(connection);
-
+         const result = await callback(connection);
          await connection.commit();
-         return true;
+         return result;
       } catch (error: unknown) {
          await connection.rollback();
-         return false;
+         throw error;
       } finally {
          connection.release();
       }

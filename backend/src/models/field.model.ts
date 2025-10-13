@@ -7,6 +7,8 @@ export type FieldFilters = {
   priceMin?: number;
   priceMax?: number;
   fieldCode?: number;
+  status?: "active" | "maintenance" | "inactive";
+  shopApproval?: "Y" | "N";
 };
 
 export type FieldSorting = {
@@ -42,6 +44,15 @@ export type FieldSlotRow = {
   end_time: string;
   status: string;
   hold_expires_at: string | null;
+};
+
+export type FieldPricingRow = {
+  pricing_id: number;
+  field_code: number;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  price_per_hour: number;
 };
 
 const BASE_SELECT = `
@@ -101,6 +112,16 @@ function buildWhere(filters: FieldFilters) {
   if (typeof filters.priceMax === "number") {
     conditions.push("f.DefaultPricePerHour <= ?");
     params.push(filters.priceMax);
+  }
+
+  if (filters.status) {
+    conditions.push("f.Status = ?");
+    params.push(filters.status);
+  }
+
+  if (filters.shopApproval) {
+    conditions.push("s.IsApproved = ?");
+    params.push(filters.shopApproval);
   }
 
   const clause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -164,6 +185,36 @@ const fieldModel = {
     `;
     const rows = await queryService.execQueryList(query, params);
     return Number((rows?.[0] as { total?: number })?.total ?? 0);
+  },
+
+  async countByStatus(filters: FieldFilters) {
+    const { clause, params } = buildWhere(filters);
+    const query = `
+      SELECT f.Status AS status, COUNT(DISTINCT f.FieldCode) AS total
+      FROM Fields f
+      JOIN Shops s ON s.ShopCode = f.ShopCode
+      ${clause}
+      GROUP BY f.Status
+    `;
+    return (await queryService.execQueryList(query, params)) as Array<{
+      status: string | null;
+      total: number;
+    }>;
+  },
+
+  async countByShopApproval(filters: FieldFilters) {
+    const { clause, params } = buildWhere(filters);
+    const query = `
+      SELECT s.IsApproved AS approval, COUNT(DISTINCT f.FieldCode) AS total
+      FROM Fields f
+      JOIN Shops s ON s.ShopCode = f.ShopCode
+      ${clause}
+      GROUP BY s.IsApproved
+    `;
+    return (await queryService.execQueryList(query, params)) as Array<{
+      approval: string | null;
+      total: number;
+    }>;
   },
 
   async listAddresses(filters: FieldFilters): Promise<string[]> {
@@ -231,6 +282,24 @@ const fieldModel = {
       ORDER BY PlayDate, StartTime
     `;
     return (await queryService.execQueryList(query, params)) as FieldSlotRow[];
+  },
+
+  async listPricing(fieldCode: number) {
+    const query = `
+      SELECT
+        PricingID AS pricing_id,
+        FieldCode AS field_code,
+        DayOfWeek AS day_of_week,
+        DATE_FORMAT(StartTime, '%H:%i') AS start_time,
+        DATE_FORMAT(EndTime, '%H:%i') AS end_time,
+        PricePerHour AS price_per_hour
+      FROM Field_Pricing
+      WHERE FieldCode = ?
+      ORDER BY DayOfWeek, StartTime
+    `;
+    return (await queryService.execQueryList(query, [
+      fieldCode,
+    ])) as FieldPricingRow[];
   },
 
   async listReviews(fieldCodes: number[]) {

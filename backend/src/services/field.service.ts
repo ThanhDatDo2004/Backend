@@ -1,8 +1,12 @@
 import fieldModel, {
   FieldFilters,
   FieldPagination,
+  FieldPricingRow,
+  FieldSlotRow,
   FieldSorting,
 } from "../models/field.model";
+
+type FieldStatusDb = "active" | "maintenance" | "inactive";
 
 type ListParams = {
   search?: string;
@@ -15,6 +19,8 @@ type ListParams = {
   pageSize?: number;
   sortBy?: "price" | "rating" | "name";
   sortDir?: "asc" | "desc";
+  status?: FieldStatusDb | string;
+  shopStatus?: string;
 };
 
 const SPORT_TYPE_LABELS: Record<string, string> = {
@@ -32,10 +38,43 @@ const SPORT_TYPE_REVERSE = Object.entries(SPORT_TYPE_LABELS).reduce<
   return acc;
 }, {});
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<FieldStatusDb, string> = {
   active: "trống",
   maintenance: "bảo trì",
   inactive: "đã đặt",
+};
+
+const STATUS_REVERSE = Object.entries(STATUS_LABELS).reduce<
+  Record<string, FieldStatusDb>
+>((acc, [db, label]) => {
+  const key = label.trim().toLowerCase();
+  acc[key] = db as FieldStatusDb;
+  return acc;
+}, {});
+
+["active", "available"].forEach((key) => {
+  STATUS_REVERSE[key] = "active";
+});
+["inactive", "booked", "occupied"].forEach((key) => {
+  STATUS_REVERSE[key] = "inactive";
+});
+STATUS_REVERSE.maintenance = "maintenance";
+
+const SHOP_APPROVAL_LABELS: Record<string, string> = {
+  Y: "Approved",
+  N: "Pending",
+};
+
+const SHOP_APPROVAL_REVERSE: Record<string, "Y" | "N"> = {
+  approved: "Y",
+  y: "Y",
+  yes: "Y",
+  true: "Y",
+  pending: "N",
+  rejected: "N",
+  n: "N",
+  no: "N",
+  false: "N",
 };
 
 function normalizeLocation(address?: string | null) {
@@ -60,6 +99,125 @@ function mapSportTypeToLabel(value?: string | null) {
 function mapStatus(value?: string | null) {
   if (!value) return "trống";
   return STATUS_LABELS[value] ?? value;
+}
+
+function mapStatusToDb(value?: string | null): FieldStatusDb | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return STATUS_REVERSE[normalized] ?? undefined;
+}
+
+function mapShopApprovalToLabel(value?: string | null) {
+  if (!value) return "Pending";
+  return SHOP_APPROVAL_LABELS[value] ?? "Pending";
+}
+
+function mapShopApprovalToDb(value?: string | null) {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return SHOP_APPROVAL_REVERSE[normalized];
+}
+
+const SLOT_INTERVAL_MINUTES = 60;
+
+function timeStringToMinutes(value: string) {
+  const [hourStr, minuteStr] = value.split(":");
+  const hours = Number(hourStr);
+  const minutes = Number(minuteStr);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function minutesToTimeString(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const hh = hours.toString().padStart(2, "0");
+  const mm = minutes.toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function getUtcDayIndex(date: string) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.getUTCDay();
+}
+
+function matchesDayOfWeek(dbValue: number, target: number | null) {
+  if (!Number.isFinite(dbValue)) return false;
+  if (target === null) return false;
+  if (dbValue === target) return true;
+  if (dbValue === 7 && target === 0) return true;
+  if (dbValue >= 1 && dbValue <= 7 && target === dbValue % 7) return true;
+  if (dbValue >= 0 && dbValue <= 6 && target === ((dbValue % 7) + 7) % 7)
+    return true;
+  return false;
+}
+
+function buildGeneratedSlots(schedule: FieldPricingRow[], playDate: string) {
+  const dayIndex = getUtcDayIndex(playDate);
+  if (dayIndex === null) return [];
+
+  const matching = schedule.filter((item) =>
+    matchesDayOfWeek(Number(item.day_of_week), dayIndex)
+  );
+
+  const generated: Array<{ start_time: string; end_time: string }> = [];
+
+  matching.forEach((item) => {
+    const startMinutes = timeStringToMinutes(item.start_time);
+    const endMinutes = timeStringToMinutes(item.end_time);
+    if (
+      startMinutes === null ||
+      endMinutes === null ||
+      endMinutes <= startMinutes
+    ) {
+      return;
+    }
+
+    let cursor = startMinutes;
+    while (cursor < endMinutes) {
+      const nextCursor = Math.min(cursor + SLOT_INTERVAL_MINUTES, endMinutes);
+      generated.push({
+        start_time: minutesToTimeString(cursor),
+        end_time: minutesToTimeString(nextCursor),
+      });
+      cursor = nextCursor;
+    }
+  });
+
+  return generated;
+}
+
+function generateSyntheticSlotId(
+  fieldCode: number,
+  playDate: string,
+  startTime: string,
+  endTime: string
+) {
+  const key = `${fieldCode}|${playDate}|${startTime}|${endTime}`;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  if (hash === 0) {
+    hash = Number(playDate.replace(/-/g, "")) || fieldCode || 1;
+  }
+  return -Math.abs(hash);
+}
+
+function mapSlotRow(slot: FieldSlotRow) {
+  return {
+    slot_id: slot.slot_id,
+    field_code: slot.field_code,
+    play_date: slot.play_date,
+    start_time: slot.start_time,
+    end_time: slot.end_time,
+    status: slot.status,
+    hold_expires_at: slot.hold_expires_at,
+    is_available: slot.status === "available",
+  };
 }
 
 const fieldService = {
@@ -93,6 +251,8 @@ const fieldService = {
           : params.fieldCode
           ? Number(params.fieldCode)
           : undefined,
+      status: mapStatusToDb(params.status),
+      shopApproval: mapShopApprovalToDb(params.shopStatus),
     };
 
     const pagination: FieldPagination = { limit: pageSize, offset };
@@ -101,11 +261,20 @@ const fieldService = {
       sortDir: params.sortDir,
     };
 
-    const [rows, total, sportTypesDb, addresses] = await Promise.all([
+    const [
+      rows,
+      total,
+      sportTypesDb,
+      addresses,
+      statusCounts,
+      approvalCounts,
+    ] = await Promise.all([
       fieldModel.list(filters, pagination, sorting),
       fieldModel.count(filters),
       fieldModel.listSportTypes(filters),
       fieldModel.listAddresses(filters),
+      fieldModel.countByStatus(filters),
+      fieldModel.countByShopApproval(filters),
     ]);
 
     const items = await this.hydrateRows(rows);
@@ -117,15 +286,70 @@ const fieldService = {
       new Set(addresses.map((addr) => normalizeLocation(addr)).filter(Boolean))
     );
 
+    const statusFacet = statusCounts.map((item) => {
+      const total = Number(item.total ?? 0);
+      return {
+        value: item.status ?? "unknown",
+        label: mapStatus(item.status ?? undefined),
+        total,
+        count: total,
+      };
+    });
+
+    const shopApprovalFacet = approvalCounts.map((item) => {
+      const total = Number(item.total ?? 0);
+      return {
+        value: item.approval ?? "N",
+        label: mapShopApprovalToLabel(item.approval ?? undefined),
+        total,
+        count: total,
+      };
+    });
+
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+    const paginationMeta = {
+      total,
+      page,
+      pageSize,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    };
+
     return {
       items,
       total,
       page,
       pageSize,
+      totalPages,
+      hasNext: paginationMeta.hasNext,
+      hasPrev: paginationMeta.hasPrev,
       facets: {
         sportTypes: sportTypes.sort((a, b) => a.localeCompare(b, "vi")),
         locations: locations.sort((a, b) => a.localeCompare(b, "vi")),
+        statuses: statusFacet,
+        shopApprovals: shopApprovalFacet,
       },
+      summary: {
+        totals: {
+          fields: total,
+          available:
+            statusFacet.find((item) => item.value === "active")?.total ?? 0,
+          maintenance:
+            statusFacet.find((item) => item.value === "maintenance")
+              ?.total ?? 0,
+          booked:
+            statusFacet.find((item) => item.value === "inactive")?.total ?? 0,
+        },
+        shops: {
+          approved:
+            shopApprovalFacet.find((item) => item.value === "Y")?.total ?? 0,
+          pending:
+            shopApprovalFacet.find((item) => item.value === "N")?.total ?? 0,
+        },
+      },
+      pagination: paginationMeta,
     };
   },
 
@@ -140,17 +364,68 @@ const fieldService = {
   },
 
   async getAvailability(fieldCode: number, playDate?: string) {
-    const slots = await fieldModel.listSlots(fieldCode, playDate);
-    return slots.map((slot) => ({
-      slot_id: slot.slot_id,
-      field_code: slot.field_code,
-      play_date: slot.play_date,
-      start_time: slot.start_time,
-      end_time: slot.end_time,
-      status: slot.status,
-      hold_expires_at: slot.hold_expires_at,
-      is_available: slot.status === "available",
-    }));
+    const pricingPromise: Promise<FieldPricingRow[]> = playDate
+      ? fieldModel.listPricing(fieldCode)
+      : Promise.resolve([]);
+
+    const [slots, pricing] = await Promise.all([
+      fieldModel.listSlots(fieldCode, playDate),
+      pricingPromise,
+    ]);
+
+    const mappedSlots = slots.map(mapSlotRow);
+
+    if (!playDate || !pricing.length) {
+      return mappedSlots;
+    }
+
+    const keyFor = (slot: {
+      play_date: string;
+      start_time: string;
+      end_time: string;
+    }) => `${slot.play_date}|${slot.start_time}|${slot.end_time}`;
+
+    const existingByKey = new Map<string, ReturnType<typeof mapSlotRow>>();
+    mappedSlots
+      .filter((slot) => slot.play_date === playDate)
+      .forEach((slot) => {
+        existingByKey.set(keyFor(slot), slot);
+      });
+
+    const generatedSlots = buildGeneratedSlots(pricing, playDate)
+      .map((slot) => {
+        const generated = {
+          slot_id: generateSyntheticSlotId(
+            fieldCode,
+            playDate,
+            slot.start_time,
+            slot.end_time
+          ),
+          field_code: fieldCode,
+          play_date: playDate,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          status: "available" as const,
+          hold_expires_at: null,
+          is_available: true,
+        };
+        return generated;
+      })
+      .filter((slot) => !existingByKey.has(keyFor(slot)));
+
+    if (!generatedSlots.length) {
+      return mappedSlots;
+    }
+
+    const combined = [...mappedSlots, ...generatedSlots];
+    combined.sort((a, b) => {
+      if (a.play_date !== b.play_date) {
+        return a.play_date.localeCompare(b.play_date);
+      }
+      return a.start_time.localeCompare(b.start_time);
+    });
+
+    return combined;
   },
 
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {

@@ -4,6 +4,7 @@ import { z } from "zod";
 import apiResponse from "../core/respone";
 import { sendShopRequestEmail } from "../services/mail.service";
 import ApiError from "../utils/apiErrors";
+import shopApplicationService from "../services/shopApplication.service";
 
 const shopRequestSchema = z.object({
   full_name: z.string().trim().min(2, "Họ và tên phải có ít nhất 2 ký tự"),
@@ -28,11 +29,13 @@ const shopController = {
 
       const payload = parsed.data;
 
+      const savedRequest = await shopApplicationService.createRequest(payload);
+
       await sendShopRequestEmail(payload);
 
       return apiResponse.success(
         res,
-        { ok: true },
+        { ok: true, request: savedRequest },
         "Đã gửi yêu cầu mở shop",
         StatusCodes.OK
       );
