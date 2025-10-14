@@ -1,3 +1,5 @@
+import type { Express } from "express";
+import { promises as fs } from "fs";
 import fieldModel, {
   FieldFilters,
   FieldPagination,
@@ -5,6 +7,11 @@ import fieldModel, {
   FieldSlotRow,
   FieldSorting,
 } from "../models/field.model";
+import s3Service from "./s3.service";
+import queryService from "./query";
+import ApiError from "../utils/apiErrors";
+import { StatusCodes } from "http-status-codes";
+import localUploadService from "./localUpload.service";
 
 type FieldStatusDb = "active" | "maintenance" | "inactive";
 
@@ -15,6 +22,7 @@ type ListParams = {
   priceMin?: number;
   priceMax?: number;
   fieldCode?: number;
+  shopCode?: number | string;
   page?: number;
   pageSize?: number;
   sortBy?: "price" | "rating" | "name";
@@ -98,7 +106,11 @@ function mapSportTypeToLabel(value?: string | null) {
 
 function mapStatus(value?: string | null) {
   if (!value) return "trống";
-  return STATUS_LABELS[value] ?? value;
+  const dbValue = mapStatusToDb(value);
+  if (dbValue) {
+    return STATUS_LABELS[dbValue];
+  }
+  return value;
 }
 
 function mapStatusToDb(value?: string | null): FieldStatusDb | undefined {
@@ -253,6 +265,12 @@ const fieldService = {
           : undefined,
       status: mapStatusToDb(params.status),
       shopApproval: mapShopApprovalToDb(params.shopStatus),
+      shopCode:
+        typeof params.shopCode === "number"
+          ? params.shopCode
+          : params.shopCode
+          ? Number(params.shopCode)
+          : undefined,
     };
 
     const pagination: FieldPagination = { limit: pageSize, offset };
@@ -426,6 +444,165 @@ const fieldService = {
     });
 
     return combined;
+  },
+
+  async addImage(fieldCode: number, file: Express.Multer.File) {
+    const existing = await fieldModel.findById(fieldCode);
+    if (!existing) {
+      return null;
+    }
+
+    const uploadResult = await s3Service.uploadFieldImage({
+      fieldCode,
+      file,
+    });
+
+    const imageRecord = await fieldModel.createImage(
+      fieldCode,
+      uploadResult.url
+    );
+
+    return {
+      ...imageRecord,
+      is_primary: Number(imageRecord.sort_order ?? 0) === 0 ? 1 : 0,
+      storage: {
+        bucket: uploadResult.bucket,
+        key: uploadResult.key,
+        region: uploadResult.region,
+      },
+    };
+  },
+
+  async createForShop(
+    payload: {
+      shopCode: number;
+      fieldName: string;
+      sportType: string;
+      address?: string | null;
+      pricePerHour: number;
+      status?: FieldStatusDb | string;
+    },
+    files: Express.Multer.File[] = []
+  ) {
+    const shop = await fieldModel.findShopByCode(payload.shopCode);
+    if (!shop) {
+      const error = new Error("SHOP_NOT_FOUND");
+      (error as any).code = "SHOP_NOT_FOUND";
+      throw error;
+    }
+
+    const sportTypeInput = payload.sportType?.trim();
+    const sportTypeDbCandidate =
+      mapSportTypeToDb(sportTypeInput) ??
+      mapSportTypeToDb(sportTypeInput?.toLowerCase());
+
+    if (
+      !sportTypeDbCandidate ||
+      !Object.prototype.hasOwnProperty.call(
+        SPORT_TYPE_LABELS,
+        sportTypeDbCandidate
+      )
+    ) {
+      const error = new Error("INVALID_SPORT_TYPE");
+      (error as any).code = "INVALID_SPORT_TYPE";
+      throw error;
+    }
+
+    const statusDb = mapStatusToDb(
+      typeof payload.status === "string" ? payload.status : undefined
+    );
+    const parsedPrice = Number(payload.pricePerHour);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      const error = new Error("INVALID_PRICE");
+      (error as any).code = "INVALID_PRICE";
+      throw error;
+    }
+
+    const uploadedObjects: Array<{ bucket: string; key: string }> = [];
+    const localStored: Array<{ absolutePath: string; publicUrl: string }> = [];
+
+    try {
+      const fieldCode = await queryService.execTransaction(
+        "fieldService.createForShop",
+        async (conn) => {
+          const newFieldCode = await fieldModel.insertField(conn, {
+            shopCode: payload.shopCode,
+            fieldName: payload.fieldName.trim(),
+            sportType: sportTypeDbCandidate,
+            address: payload.address?.trim() || null,
+            pricePerHour: parsedPrice,
+            status: statusDb ?? "active",
+          });
+
+          let sortOrder = 0;
+          for (const file of files ?? []) {
+            try {
+              const upload = await s3Service.uploadFieldImage({
+                fieldCode: newFieldCode,
+                file,
+              });
+              uploadedObjects.push({ bucket: upload.bucket, key: upload.key });
+              await fieldModel.insertFieldImage(conn, {
+                fieldCode: newFieldCode,
+                imageUrl: upload.url,
+                sortOrder: sortOrder++,
+              });
+            } catch (error) {
+              const fallbackMode =
+                (process.env.FIELD_IMAGE_FALLBACK || "")
+                  .trim()
+                  .toLowerCase() || "s3";
+
+              if (
+                fallbackMode === "local" ||
+                fallbackMode === "filesystem" ||
+                fallbackMode === "fs"
+              ) {
+                const stored = await localUploadService.storeFieldImageLocally(
+                  newFieldCode,
+                  file
+                );
+                localStored.push(stored);
+                await fieldModel.insertFieldImage(conn, {
+                  fieldCode: newFieldCode,
+                  imageUrl: stored.publicUrl,
+                  sortOrder: sortOrder++,
+                });
+                continue;
+              }
+
+              const message =
+                (error as Error)?.message ||
+                "Không thể tải ảnh lên bộ nhớ S3";
+              throw new ApiError(
+                StatusCodes.BAD_GATEWAY,
+                `Upload ảnh thất bại: ${message}`
+              );
+            }
+          }
+
+          return newFieldCode;
+        }
+      );
+
+      return await this.getById(fieldCode);
+    } catch (error) {
+      if (uploadedObjects.length) {
+        await Promise.all(
+          uploadedObjects.map((obj) =>
+            s3Service.deleteObject(obj.bucket, obj.key).catch(() => undefined)
+          )
+        );
+      }
+      if (localStored.length) {
+        await Promise.all(
+          localStored.map((item) =>
+            fs.unlink(item.absolutePath).catch(() => undefined)
+          )
+        );
+      }
+      throw error;
+    }
   },
 
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {

@@ -85,8 +85,33 @@ const authController = {
         );
       }
 
+      const toNumberOrUndefined = (value: unknown) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : undefined;
+      };
+
+      const safeUserId =
+        toNumberOrUndefined((user as any)?.UserID) ??
+        toNumberOrUndefined((dataUser as any)?.UserID) ??
+        toNumberOrUndefined((dataUser as any)?.user_code) ??
+        0;
+      const safeLevelCode =
+        toNumberOrUndefined((user as any)?.LevelCode) ??
+        toNumberOrUndefined((dataUser as any)?.LevelCode) ??
+        toNumberOrUndefined((dataUser as any)?.level_code);
+
       const normalizedUser = {
         ...dataUser,
+        UserID: safeUserId,
+        user_code: safeUserId,
+        LevelCode:
+          safeLevelCode !== undefined
+            ? safeLevelCode
+            : (dataUser as any)?.LevelCode,
+        level_code:
+          safeLevelCode !== undefined
+            ? safeLevelCode
+            : (dataUser as any)?.level_code,
         IsActive,
         isActive: Number(IsActive ?? 0) ? 1 : 0,
       };

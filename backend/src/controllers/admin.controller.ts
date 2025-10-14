@@ -70,7 +70,7 @@ const adminController = {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
-            parsed.error.errors[0]?.message || "Dữ liệu không hợp lệ"
+          parsed.error.issues[0]?.message || "Dữ liệu không hợp lệ"
           )
         );
       }
@@ -163,7 +163,7 @@ const adminController = {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
-            parsed.error.errors[0]?.message || "Dữ liệu không hợp lệ"
+            parsed.error.issues[0]?.message || "Dữ liệu không hợp lệ"
           )
         );
       }

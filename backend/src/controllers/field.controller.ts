@@ -136,6 +136,43 @@ const fieldController = {
     }
   },
 
+  async uploadImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Vui lòng chọn một tập tin hình ảnh để tải lên"
+          )
+        );
+      }
+
+      const created = await fieldService.addImage(id, file);
+      if (!created) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
+        );
+      }
+
+      return apiResponse.success(
+        res,
+        created,
+        "Tải ảnh sân thành công",
+        StatusCodes.CREATED
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async availability(req: Request, res: Response, next: NextFunction) {
     try {
       const id = Number(req.params.id);

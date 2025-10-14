@@ -1,3 +1,5 @@
+import type { ResultSetHeader } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import queryService from "../services/query";
 
 export type FieldFilters = {
@@ -9,6 +11,7 @@ export type FieldFilters = {
   fieldCode?: number;
   status?: "active" | "maintenance" | "inactive";
   shopApproval?: "Y" | "N";
+  shopCode?: number;
 };
 
 export type FieldSorting = {
@@ -122,6 +125,11 @@ function buildWhere(filters: FieldFilters) {
   if (filters.shopApproval) {
     conditions.push("s.IsApproved = ?");
     params.push(filters.shopApproval);
+  }
+
+  if (filters.shopCode) {
+    conditions.push("f.ShopCode = ?");
+    params.push(filters.shopCode);
   }
 
   const clause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -302,6 +310,72 @@ const fieldModel = {
     ])) as FieldPricingRow[];
   },
 
+  async findById(fieldCode: number) {
+    const query = `
+      SELECT
+        f.FieldCode AS field_code,
+        f.ShopCode AS shop_code
+      FROM Fields f
+      WHERE f.FieldCode = ?
+      LIMIT 1
+    `;
+    const rows = await queryService.execQueryList(query, [fieldCode]);
+    return (
+      (rows[0] as { field_code: number; shop_code: number } | undefined) ?? null
+    );
+  },
+
+  async findShopByCode(shopCode: number) {
+    const query = `
+      SELECT
+        s.ShopCode AS shop_code,
+        s.UserID AS user_id,
+        s.IsApproved AS is_approved
+      FROM Shops s
+      WHERE s.ShopCode = ?
+      LIMIT 1
+    `;
+    const rows = await queryService.execQueryList(query, [shopCode]);
+    return (
+      (rows[0] as
+        | { shop_code: number; user_id: number; is_approved: string | null }
+        | undefined) ?? null
+    );
+  },
+
+  async createImage(
+    fieldCode: number,
+    imageUrl: string,
+    sortOrder?: number
+  ) {
+    return await queryService.execTransaction(
+      "fieldModel.createImage",
+      async (conn) => {
+        let finalSortOrder = sortOrder;
+
+        if (typeof finalSortOrder !== "number") {
+          const [orderRows] = await conn.query(
+            `
+              SELECT COALESCE(MAX(SortOrder), -1) + 1 AS next_order
+              FROM Field_Images
+              WHERE FieldCode = ?
+            `,
+            [fieldCode]
+          );
+          const nextOrder =
+            (orderRows as Array<{ next_order: number }>)[0]?.next_order ?? 0;
+          finalSortOrder = Number(nextOrder);
+        }
+
+        return await fieldModel.insertFieldImage(conn, {
+          fieldCode,
+          imageUrl,
+          sortOrder: finalSortOrder ?? 0,
+        });
+      }
+    );
+  },
+
   async listReviews(fieldCodes: number[]) {
     if (!fieldCodes.length) return [];
     const query = `
@@ -319,6 +393,66 @@ const fieldModel = {
       ORDER BY r.FieldCode, r.CreateAt DESC, r.ReviewCode DESC
     `;
     return await queryService.execQueryList(query, [fieldCodes]);
+  },
+
+  async insertField(
+    conn: PoolConnection,
+    params: {
+      shopCode: number;
+      fieldName: string;
+      sportType: string;
+      address?: string | null;
+      pricePerHour: number;
+      status?: "active" | "maintenance" | "inactive";
+    }
+  ) {
+    const [result] = await conn.query<ResultSetHeader>(
+      `
+        INSERT INTO Fields (
+          ShopCode,
+          FieldName,
+          SportType,
+          Address,
+          DefaultPricePerHour,
+          Status
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [
+        params.shopCode,
+        params.fieldName,
+        params.sportType,
+        params.address ?? null,
+        params.pricePerHour,
+        params.status ?? "active",
+      ]
+    );
+
+    return Number(result.insertId ?? 0);
+  },
+
+  async insertFieldImage(
+    conn: PoolConnection,
+    params: {
+      fieldCode: number;
+      imageUrl: string;
+      sortOrder: number;
+    }
+  ) {
+    const [result] = await conn.query<ResultSetHeader>(
+      `
+        INSERT INTO Field_Images (FieldCode, ImageUrl, SortOrder)
+        VALUES (?, ?, ?)
+      `,
+      [params.fieldCode, params.imageUrl, params.sortOrder]
+    );
+
+    return {
+      image_code: Number(result.insertId ?? 0),
+      field_code: params.fieldCode,
+      image_url: params.imageUrl,
+      sort_order: params.sortOrder,
+    };
   },
 };
 
