@@ -87,6 +87,97 @@ const shopService = {
       approved_at: row.approved_at ?? null,
     };
   },
+
+  async updateByUserId(
+    userId: number,
+    payload: {
+      shop_name: string;
+      address: string;
+      bank_account_number?: string;
+      bank_name?: string;
+      bank_account_holder?: string;
+    }
+  ) {
+    if (!Number.isFinite(userId)) return null;
+    const result = await queryService.execTransaction(
+      "shopService.updateByUserId",
+      async (conn) => {
+        const [shopRows] = await conn.query(
+          `
+            SELECT ShopCode
+            FROM Shops
+            WHERE UserID = ?
+            LIMIT 1
+          `,
+          [userId]
+        );
+        let shopCode = Number(
+          (shopRows as Array<{ ShopCode: number }>)?.[0]?.ShopCode ?? 0
+        );
+        
+        // If no existing shop, create new one
+        if (!shopCode) {
+          const [insertRes] = await conn.query(
+            `
+              INSERT INTO Shops (UserID, ShopName, Address, IsApproved, CreateAt, UpdateAt)
+              VALUES (?, ?, ?, 'Y', NOW(), NOW())
+            `,
+            [userId, payload.shop_name.trim(), payload.address.trim()]
+          );
+          // mysql2 ResultSetHeader
+          shopCode = Number((insertRes as any)?.insertId ?? 0);
+          if (!shopCode) return null;
+        } else {
+          // Update existing shop
+          await conn.query(
+            `
+              UPDATE Shops
+              SET ShopName = ?, Address = ?, UpdateAt = NOW()
+              WHERE ShopCode = ?
+            `,
+            [payload.shop_name.trim(), payload.address.trim(), shopCode]
+          );
+        }
+
+        if (
+          (payload.bank_account_number && payload.bank_account_number.trim()) ||
+          (payload.bank_name && payload.bank_name.trim()) ||
+          (payload.bank_account_holder && payload.bank_account_holder.trim())
+        ) {
+          // Upsert default bank account for the shop
+          const accountNumber = (payload.bank_account_number || "").trim();
+          const bankName = (payload.bank_name || "").trim();
+          const accountHolder =
+            (payload.bank_account_holder || "").trim() ||
+            payload.shop_name.trim();
+
+          // Mark existing defaults as non-default
+          await conn.query(
+            `
+              UPDATE Shop_Bank_Accounts
+              SET IsDefault = 'N'
+              WHERE ShopCode = ?
+            `,
+            [shopCode]
+          );
+
+          // Insert new default record
+          await conn.query(
+            `
+              INSERT INTO Shop_Bank_Accounts (ShopCode, AccountNumber, BankName, AccountHolder, IsDefault)
+              VALUES (?, ?, ?, ?, 'Y')
+            `,
+            [shopCode, accountNumber, bankName, accountHolder]
+          );
+        }
+
+        return shopCode;
+      }
+    );
+
+    if (!result) return null;
+    return this.getByUserId(userId);
+  },
 };
 
 export default shopService;

@@ -50,6 +50,50 @@ const shopController = {
     }
   },
 
+  async updateMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const schema = z.object({
+        shop_name: z.string().trim().min(2, "Tên shop phải có ít nhất 2 ký tự"),
+        address: z.string().trim().min(5, "Địa chỉ phải có ít nhất 5 ký tự"),
+        bank_account_number: z.string().trim().optional(),
+        bank_name: z.string().trim().optional(),
+        bank_account_holder: z.string().trim().optional(),
+      });
+
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        const message = parsed.error.issues[0]?.message || "Dữ liệu không hợp lệ";
+        return next(new ApiError(StatusCodes.BAD_REQUEST, message));
+      }
+
+      const updated = await shopService.updateByUserId(userId, parsed.data);
+      if (!updated) {
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop"));
+      }
+
+      return apiResponse.success(
+        res,
+        updated,
+        "Cập nhật shop thành công",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async current(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = Number(

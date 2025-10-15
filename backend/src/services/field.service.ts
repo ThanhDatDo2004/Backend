@@ -12,6 +12,8 @@ import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import localUploadService from "./localUpload.service";
+import url from "url";
+import path from "path";
 
 type FieldStatusDb = "active" | "maintenance" | "inactive";
 
@@ -29,6 +31,7 @@ type ListParams = {
   sortDir?: "asc" | "desc";
   status?: FieldStatusDb | string;
   shopStatus?: string;
+  shopActive?: 0 | 1;
 };
 
 const SPORT_TYPE_LABELS: Record<string, string> = {
@@ -271,6 +274,7 @@ const fieldService = {
           : params.shopCode
           ? Number(params.shopCode)
           : undefined,
+      shopActive: typeof params.shopActive === "number" ? params.shopActive : 1,
     };
 
     const pagination: FieldPagination = { limit: pageSize, offset };
@@ -363,6 +367,149 @@ const fieldService = {
       },
       pagination: paginationMeta,
     };
+  },
+
+  async deleteImages(
+    fieldCode: number,
+    imageCodes: number[],
+    shopCode?: number
+  ) {
+    if (!Array.isArray(imageCodes) || imageCodes.length === 0) return [];
+
+    const field = await fieldModel.findById(fieldCode);
+    if (!field) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân");
+    }
+    if (shopCode && field.shop_code !== shopCode) {
+      throw new ApiError(
+        StatusCodes.FORBIDDEN,
+        "Bạn không có quyền xóa ảnh của sân này"
+      );
+    }
+
+    const images = await fieldModel.getImagesByCodes(fieldCode, imageCodes);
+    if (!images.length) return [];
+
+    // Try deleting storage objects best-effort
+    const deletions: Promise<unknown>[] = [];
+    for (const img of images as Array<{ image_url: string }>) {
+      const imageUrl = (img.image_url || "").trim();
+      if (!imageUrl) continue;
+      try {
+        const parsed = new URL(imageUrl);
+        const host = (parsed.host || parsed.hostname || "").toLowerCase();
+        if (host.includes("amazonaws.com") || host.includes("s3")) {
+          // Guess bucket and key from url
+          // Formats supported: https://{bucket}.s3.{region}.amazonaws.com/{key}
+          // or custom CDN where key starts after the bucket base path isn't derivable -> skip
+          const pathname = parsed.pathname.replace(/^\/+/, "");
+          const hostParts = parsed.hostname.split(".");
+          const bucketCandidate = hostParts[0];
+          const regionCandidate = hostParts.includes("amazonaws")
+            ? hostParts.find(
+                (p) => p && p !== "s3" && p !== "amazonaws" && p !== "com"
+              )
+            : undefined;
+          if (bucketCandidate && pathname) {
+            deletions.push(
+              s3Service
+                .deleteObject(bucketCandidate, pathname)
+                .catch(() => undefined)
+            );
+          }
+        } else if (
+          imageUrl.startsWith("/uploads/") ||
+          imageUrl.startsWith("/public/")
+        ) {
+          const absolutePath = path.join(
+            process.cwd(),
+            imageUrl.replace(/^\/+/, "")
+          );
+          deletions.push(fs.unlink(absolutePath).catch(() => undefined));
+        }
+      } catch {
+        // Ignore malformed URL
+      }
+    }
+
+    await Promise.allSettled(deletions);
+
+    await fieldModel.deleteImages(fieldCode, imageCodes);
+
+    // Return the field with remaining images hydrated
+    return this.getById(fieldCode);
+  },
+
+  async deleteFieldForShop(options: {
+    shopCode: number;
+    fieldCode: number;
+    mode?: "hard" | "soft";
+  }) {
+    const { shopCode, fieldCode } = options;
+    const mode = options.mode === "soft" ? "soft" : "hard";
+
+    const shop = await fieldModel.findShopByCode(shopCode);
+    if (!shop) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop");
+    }
+
+    const field = await fieldModel.findById(fieldCode);
+    if (!field || field.shop_code !== shopCode) {
+      return null;
+    }
+
+    // If there are future bookings, block hard delete and soft delete with 409
+    const hasFuture = await fieldModel.hasFutureBookings(fieldCode);
+    if (hasFuture) {
+      const err = new ApiError(
+        StatusCodes.CONFLICT,
+        "Sân có đơn đặt trong tương lai, không thể xóa."
+      );
+      (err as any).code = "FUTURE_BOOKINGS";
+      throw err;
+    }
+
+    if (mode === "soft") {
+      const ok = await fieldModel.softDeleteField(fieldCode);
+      return ok ? { deleted: true } : null;
+    }
+
+    // hard delete: remove images from storage, delete image rows, then delete field
+    const images = await fieldModel.listAllImagesForField(fieldCode);
+    const deletions: Promise<unknown>[] = [];
+    for (const img of images as Array<{ image_url: string }>) {
+      const imageUrl = (img.image_url || "").trim();
+      if (!imageUrl) continue;
+      try {
+        const parsed = new URL(imageUrl);
+        const host = (parsed.host || parsed.hostname || "").toLowerCase();
+        if (host.includes("amazonaws.com") || host.includes("s3")) {
+          const pathname = parsed.pathname.replace(/^\/+/, "");
+          const bucket = parsed.hostname.split(".")[0];
+          if (bucket && pathname) {
+            deletions.push(
+              s3Service.deleteObject(bucket, pathname).catch(() => undefined)
+            );
+          }
+        } else if (
+          imageUrl.startsWith("/uploads/") ||
+          imageUrl.startsWith("/public/")
+        ) {
+          const absolutePath = path.join(
+            process.cwd(),
+            imageUrl.replace(/^\/+/, "")
+          );
+          deletions.push(fs.unlink(absolutePath).catch(() => undefined));
+        }
+      } catch {
+        // ignore
+      }
+    }
+    await Promise.allSettled(deletions);
+
+    await fieldModel.deleteAllImagesForField(fieldCode);
+    const ok = await fieldModel.hardDeleteField(fieldCode);
+    return ok ? { deleted: true } : null;
   },
 
   async getById(fieldCode: number) {

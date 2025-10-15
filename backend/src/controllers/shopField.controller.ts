@@ -77,6 +77,71 @@ const shopFieldController = {
     }
   },
 
+  async removeForMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const shop = await shopService.getByUserId(userId);
+      if (!shop || !shop.shop_code) {
+        return next(
+          new ApiError(StatusCodes.FORBIDDEN, "Bạn không sở hữu shop nào.")
+        );
+      }
+
+      const fieldCode = Number(req.params.fieldCode ?? req.params.fieldId);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const mode = (
+        String(req.query?.mode || "hard").toLowerCase() === "soft"
+          ? "soft"
+          : "hard"
+      ) as "hard" | "soft";
+
+      try {
+        const result = await fieldService.deleteFieldForShop({
+          shopCode: Number(shop.shop_code),
+          fieldCode,
+          mode,
+        });
+        if (!result) {
+          return next(
+            new ApiError(
+              StatusCodes.NOT_FOUND,
+              "Không tìm thấy sân hoặc bạn không có quyền xóa"
+            )
+          );
+        }
+        return apiResponse.success(
+          res,
+          { deleted: true },
+          "Xóa sân thành công",
+          StatusCodes.OK
+        );
+      } catch (error) {
+        if (error instanceof ApiError) {
+          return next(error);
+        }
+        return next(error);
+      }
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async create(req: Request, res: Response, next: NextFunction) {
     try {
       const shopCode = parseShopCode(req);
@@ -145,7 +210,7 @@ const shopFieldController = {
   async update(req: Request, res: Response, next: NextFunction) {
     try {
       const shopCode = parseShopCode(req);
-      const fieldId = Number(req.params.fieldId);
+      const fieldId = Number(req.params.fieldId ?? req.params.fieldCode);
       if (!Number.isFinite(fieldId) || fieldId <= 0) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")

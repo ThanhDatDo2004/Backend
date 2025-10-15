@@ -49,6 +49,7 @@ const uploadsDir = path.resolve(__dirname, "../uploads");
 
 app.use("/api/auth", authRouter);
 app.get("/api/shops/me", requireAuth, shopController.current);
+app.put("/api/shops/me", requireAuth, shopController.updateMe);
 app.use("/api/fields", fieldRouter);
 app.use("/api/shops", shopRouter);
 app.use("/api/admin", adminRouter);

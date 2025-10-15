@@ -56,6 +56,7 @@ const fieldController = {
         sortDir: sortDirection,
         status: queryString(status) ?? "active", // Mặc định chỉ lấy sân 'active'
         shopStatus: queryString(shopStatus),
+        shopActive: 1, // Chỉ lấy sân của shop có chủ shop đang hoạt động
       });
 
       const {

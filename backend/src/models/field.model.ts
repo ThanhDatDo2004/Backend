@@ -12,6 +12,7 @@ export type FieldFilters = {
   status?: "active" | "maintenance" | "inactive";
   shopApproval?: "Y" | "N";
   shopCode?: number;
+  shopActive?: 0 | 1;
 };
 
 export type FieldSorting = {
@@ -74,6 +75,7 @@ const BASE_SELECT = `
     s.IsApproved AS shop_is_approved
   FROM Fields f
   JOIN Shops s ON s.ShopCode = f.ShopCode
+  JOIN Users u ON u.UserID = s.UserID
   LEFT JOIN Reviews r ON r.FieldCode = f.FieldCode
 `;
 
@@ -130,6 +132,11 @@ function buildWhere(filters: FieldFilters) {
     params.push(filters.shopCode);
   }
 
+  if (typeof filters.shopActive === "number") {
+    conditions.push("u.IsActive = ?");
+    params.push(filters.shopActive);
+  }
+
   const clause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   return { clause, params };
 }
@@ -181,12 +188,41 @@ const fieldModel = {
     ])) as FieldRow[];
   },
 
+  async getImagesByCodes(fieldCode: number, imageCodes: number[]) {
+    if (!imageCodes.length) return [];
+    const query = `
+      SELECT
+        ImageCode AS image_code,
+        FieldCode AS field_code,
+        ImageUrl AS image_url,
+        SortOrder AS sort_order
+      FROM Field_Images
+      WHERE FieldCode = ? AND ImageCode IN (?)
+      ORDER BY SortOrder, ImageCode
+    `;
+    return await queryService.execQueryList(query, [fieldCode, imageCodes]);
+  },
+
+  async deleteImages(fieldCode: number, imageCodes: number[]) {
+    if (!imageCodes.length) return 0;
+    const query = `
+      DELETE FROM Field_Images
+      WHERE FieldCode = ? AND ImageCode IN (?)
+    `;
+    const result = await queryService.execQuery(query, [fieldCode, imageCodes]);
+    if (typeof result === "boolean") {
+      return result ? imageCodes.length : 0;
+    }
+    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+  },
+
   async count(filters: FieldFilters): Promise<number> {
     const { clause, params } = buildWhere(filters);
     const query = `
       SELECT COUNT(DISTINCT f.FieldCode) AS total
       FROM Fields f
       JOIN Shops s ON s.ShopCode = f.ShopCode
+      JOIN Users u ON u.UserID = s.UserID
       ${clause}
     `;
     const rows = await queryService.execQueryList(query, params);
@@ -199,6 +235,7 @@ const fieldModel = {
       SELECT f.Status AS status, COUNT(DISTINCT f.FieldCode) AS total
       FROM Fields f
       JOIN Shops s ON s.ShopCode = f.ShopCode
+      JOIN Users u ON u.UserID = s.UserID
       ${clause}
       GROUP BY f.Status
     `;
@@ -214,6 +251,7 @@ const fieldModel = {
       SELECT s.IsApproved AS approval, COUNT(DISTINCT f.FieldCode) AS total
       FROM Fields f
       JOIN Shops s ON s.ShopCode = f.ShopCode
+      JOIN Users u ON u.UserID = s.UserID
       ${clause}
       GROUP BY s.IsApproved
     `;
@@ -229,6 +267,7 @@ const fieldModel = {
       SELECT DISTINCT f.Address AS address
       FROM Fields f
       JOIN Shops s ON s.ShopCode = f.ShopCode
+      JOIN Users u ON u.UserID = s.UserID
       ${clause}
     `;
     const rows = await queryService.execQueryList(query, params);
@@ -243,6 +282,7 @@ const fieldModel = {
       SELECT DISTINCT f.SportType AS sport_type
       FROM Fields f
       JOIN Shops s ON s.ShopCode = f.ShopCode
+      JOIN Users u ON u.UserID = s.UserID
       ${clause}
       ORDER BY f.SportType
     `;
@@ -288,6 +328,70 @@ const fieldModel = {
       ORDER BY PlayDate, StartTime
     `;
     return (await queryService.execQueryList(query, params)) as FieldSlotRow[];
+  },
+
+  async hasFutureBookings(fieldCode: number) {
+    const query = `
+      SELECT COUNT(*) AS cnt
+      FROM Field_Slots
+      WHERE FieldCode = ?
+        AND (
+          (PlayDate > CURDATE()) OR
+          (PlayDate = CURDATE() AND EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i'))
+        )
+        AND Status IN ('booked', 'held')
+    `;
+    const rows = await queryService.execQueryList(query, [fieldCode]);
+    return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0) > 0;
+  },
+
+  async deleteAllImagesForField(fieldCode: number) {
+    const query = `
+      DELETE FROM Field_Images WHERE FieldCode = ?
+    `;
+    const result = await queryService.execQuery(query, [fieldCode]);
+    if (typeof result === "boolean") return result ? 1 : 0;
+    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+  },
+
+  async listAllImagesForField(fieldCode: number) {
+    const query = `
+      SELECT
+        ImageCode AS image_code,
+        FieldCode AS field_code,
+        ImageUrl AS image_url,
+        SortOrder AS sort_order
+      FROM Field_Images
+      WHERE FieldCode = ?
+      ORDER BY SortOrder, ImageCode
+    `;
+    return await queryService.execQueryList(query, [fieldCode]);
+  },
+
+  async hardDeleteField(fieldCode: number) {
+    const query = `
+      DELETE FROM Fields WHERE FieldCode = ?
+    `;
+    const result = await queryService.execQuery(query, [fieldCode]);
+    if (typeof result === "boolean") return result;
+    return !!(
+      result &&
+      typeof (result as ResultSetHeader).affectedRows === "number" &&
+      (result as ResultSetHeader).affectedRows > 0
+    );
+  },
+
+  async softDeleteField(fieldCode: number) {
+    const query = `
+      UPDATE Fields SET Status = 'inactive' WHERE FieldCode = ?
+    `;
+    const result = await queryService.execQuery(query, [fieldCode]);
+    if (typeof result === "boolean") return result;
+    return !!(
+      result &&
+      typeof (result as ResultSetHeader).affectedRows === "number" &&
+      (result as ResultSetHeader).affectedRows > 0
+    );
   },
 
   async listPricing(fieldCode: number) {
@@ -475,7 +579,11 @@ const fieldModel = {
     if (typeof result === "boolean") {
       return result;
     }
-    return !!(result && typeof result.affectedRows === "number" && result.affectedRows > 0);
+    return !!(
+      result &&
+      typeof result.affectedRows === "number" &&
+      result.affectedRows > 0
+    );
   },
 
   async insertFieldImage(
