@@ -14,6 +14,12 @@ const toNumber = (value: unknown) => {
   return undefined;
 };
 
+const queryString = (value: unknown): string | undefined => {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.trim()
+    : undefined;
+};
+
 const fieldController = {
   async list(req: Request, res: Response, next: NextFunction) {
     try {
@@ -39,17 +45,17 @@ const fieldController = {
         sortDir === "desc" || sortDir === "asc" ? sortDir : undefined;
 
       const data = await fieldService.list({
-        search: typeof search === "string" ? search : undefined,
-        sportType: typeof sportType === "string" ? sportType : undefined,
-        location: typeof location === "string" ? location : undefined,
+        search: queryString(search),
+        sportType: queryString(sportType),
+        location: queryString(location),
         priceMin: toNumber(priceMin),
         priceMax: toNumber(priceMax),
         page: toNumber(pageParam),
         pageSize: toNumber(pageSizeParam),
         sortBy: sortKey,
         sortDir: sortDirection,
-        status: typeof status === "string" ? status : undefined,
-        shopStatus: typeof shopStatus === "string" ? shopStatus : undefined,
+        status: queryString(status) ?? "active", // Mặc định chỉ lấy sân 'active'
+        shopStatus: queryString(shopStatus),
       });
 
       const {
@@ -66,26 +72,25 @@ const fieldController = {
       } = data;
 
       const appliedFilters = {
-        search: typeof search === "string" ? search : undefined,
-        sportType: typeof sportType === "string" ? sportType : undefined,
-        location: typeof location === "string" ? location : undefined,
+        search: queryString(search),
+        sportType: queryString(sportType),
+        location: queryString(location),
         priceMin: toNumber(priceMin),
         priceMax: toNumber(priceMax),
-        status: typeof status === "string" ? status : undefined,
-        shopStatus: typeof shopStatus === "string" ? shopStatus : undefined,
+        status: queryString(status) ?? "active",
+        shopStatus: queryString(shopStatus),
         sortBy: sortKey,
         sortDir: sortDirection,
       };
 
-      const paginationMeta =
-        pagination ?? {
-          total,
-          page,
-          pageSize,
-          totalPages,
-          hasNext,
-          hasPrev,
-        };
+      const paginationMeta = pagination ?? {
+        total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext,
+        hasPrev,
+      };
 
       return apiResponse.success(
         res,
@@ -97,10 +102,8 @@ const fieldController = {
           facets,
           summary,
           meta: {
-            ...paginationMeta,
             pagination: paginationMeta,
             filters: appliedFilters,
-            appliedFilters,
           },
         },
         "Fetched fields successfully",
@@ -157,9 +160,7 @@ const fieldController = {
 
       const created = await fieldService.addImage(id, file);
       if (!created) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
-        );
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
       }
 
       return apiResponse.success(
@@ -233,8 +234,7 @@ const fieldController = {
         customer: typeof customer === "object" ? customer : undefined,
         payment_method:
           typeof payment_method === "string" ? payment_method : undefined,
-        total_price:
-          typeof total_price === "number" ? total_price : undefined,
+        total_price: typeof total_price === "number" ? total_price : undefined,
         notes: typeof notes === "string" ? notes : undefined,
       });
 

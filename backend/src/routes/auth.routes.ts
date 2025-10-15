@@ -1,5 +1,8 @@
 import express from "express";
-import authController, { register, verifyEmail } from "../controllers/auth.controller";
+import authController, {
+  register,
+  verifyEmail,
+} from "../controllers/auth.controller";
 
 const router = express.Router();
 
@@ -10,8 +13,8 @@ router.post("/register", register);
 router.post("/send-code", authController.sendCode);
 router.post("/verify-code", authController.verifyCode);
 
-// Kiểm tra email tồn tại (Forgot)
-router.post("/check-email", authController.checkEmailExists);
+// Endpoint kiểm tra email đã bị loại bỏ để tăng cường bảo mật (tránh email enumeration)
+// router.post("/check-email", authController.checkEmailExists);
 
 // Forgot / Reset password
 router.post("/forgot-password", authController.forgotPassword);

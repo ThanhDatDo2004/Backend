@@ -57,7 +57,10 @@ const shopController = {
       );
       if (!Number.isFinite(userId) || userId <= 0) {
         return next(
-          new ApiError(StatusCodes.UNAUTHORIZED, "Vui lòng đăng nhập để tiếp tục")
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
         );
       }
 

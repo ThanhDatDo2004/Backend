@@ -12,4 +12,3 @@ export type AuthenticatedUser = JwtUserPayload & {
   user_id?: number;
   level_code?: number;
 };
-

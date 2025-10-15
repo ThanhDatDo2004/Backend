@@ -101,9 +101,7 @@ function buildWhere(filters: FieldFilters) {
 
   if (filters.location) {
     const like = `%${filters.location.toLowerCase()}%`;
-    conditions.push(
-      `(LOWER(f.Address) LIKE ? OR LOWER(s.Address) LIKE ?)`
-    );
+    conditions.push(`(LOWER(f.Address) LIKE ? OR LOWER(s.Address) LIKE ?)`);
     params.push(like, like);
   }
 
@@ -343,11 +341,7 @@ const fieldModel = {
     );
   },
 
-  async createImage(
-    fieldCode: number,
-    imageUrl: string,
-    sortOrder?: number
-  ) {
+  async createImage(fieldCode: number, imageUrl: string, sortOrder?: number) {
     return await queryService.execTransaction(
       "fieldModel.createImage",
       async (conn) => {
@@ -429,6 +423,59 @@ const fieldModel = {
     );
 
     return Number(result.insertId ?? 0);
+  },
+
+  async updateField(
+    fieldId: number,
+    dataToUpdate: Partial<{
+      field_name: string;
+      sport_type: string;
+      address: string;
+      price_per_hour: number;
+      status: "active" | "maintenance" | "inactive";
+    }>
+  ) {
+    const fields: string[] = [];
+    const params: any[] = [];
+
+    if (dataToUpdate.field_name) {
+      fields.push("FieldName = ?");
+      params.push(dataToUpdate.field_name);
+    }
+    if (dataToUpdate.sport_type) {
+      fields.push("SportType = ?");
+      params.push(dataToUpdate.sport_type);
+    }
+    if (dataToUpdate.address) {
+      fields.push("Address = ?");
+      params.push(dataToUpdate.address);
+    }
+    if (dataToUpdate.price_per_hour) {
+      fields.push("DefaultPricePerHour = ?");
+      params.push(dataToUpdate.price_per_hour);
+    }
+    if (dataToUpdate.status) {
+      fields.push("Status = ?");
+      params.push(dataToUpdate.status);
+    }
+
+    if (fields.length === 0) {
+      return false;
+    }
+
+    const query = `
+      UPDATE Fields
+      SET ${fields.join(", ")}
+      WHERE FieldCode = ?
+    `;
+    params.push(fieldId);
+
+    const result = await queryService.execQuery(query, params);
+    // If execQuery returns a boolean, just return it; otherwise, check affectedRows
+    if (typeof result === "boolean") {
+      return result;
+    }
+    return !!(result && typeof result.affectedRows === "number" && result.affectedRows > 0);
   },
 
   async insertFieldImage(

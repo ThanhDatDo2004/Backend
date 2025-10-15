@@ -87,7 +87,10 @@ const SHOP_APPROVAL_REVERSE: Record<string, "Y" | "N"> = {
 
 function normalizeLocation(address?: string | null) {
   if (!address) return "";
-  const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
+  const parts = address
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   if (parts.length >= 2) {
     return parts.slice(-2).join(", ");
   }
@@ -235,10 +238,7 @@ function mapSlotRow(slot: FieldSlotRow) {
 const fieldService = {
   async list(params: ListParams) {
     const page = Math.max(1, Number(params.page) || 1);
-    const pageSize = Math.min(
-      50,
-      Math.max(1, Number(params.pageSize) || 12)
-    );
+    const pageSize = Math.min(50, Math.max(1, Number(params.pageSize) || 12));
     const offset = (page - 1) * pageSize;
 
     const filters: FieldFilters = {
@@ -279,21 +279,15 @@ const fieldService = {
       sortDir: params.sortDir,
     };
 
-    const [
-      rows,
-      total,
-      sportTypesDb,
-      addresses,
-      statusCounts,
-      approvalCounts,
-    ] = await Promise.all([
-      fieldModel.list(filters, pagination, sorting),
-      fieldModel.count(filters),
-      fieldModel.listSportTypes(filters),
-      fieldModel.listAddresses(filters),
-      fieldModel.countByStatus(filters),
-      fieldModel.countByShopApproval(filters),
-    ]);
+    const [rows, total, sportTypesDb, addresses, statusCounts, approvalCounts] =
+      await Promise.all([
+        fieldModel.list(filters, pagination, sorting),
+        fieldModel.count(filters),
+        fieldModel.listSportTypes(filters),
+        fieldModel.listAddresses(filters),
+        fieldModel.countByStatus(filters),
+        fieldModel.countByShopApproval(filters),
+      ]);
 
     const items = await this.hydrateRows(rows);
 
@@ -355,8 +349,8 @@ const fieldService = {
           available:
             statusFacet.find((item) => item.value === "active")?.total ?? 0,
           maintenance:
-            statusFacet.find((item) => item.value === "maintenance")
-              ?.total ?? 0,
+            statusFacet.find((item) => item.value === "maintenance")?.total ??
+            0,
           booked:
             statusFacet.find((item) => item.value === "inactive")?.total ?? 0,
         },
@@ -549,9 +543,8 @@ const fieldService = {
               });
             } catch (error) {
               const fallbackMode =
-                (process.env.FIELD_IMAGE_FALLBACK || "")
-                  .trim()
-                  .toLowerCase() || "s3";
+                (process.env.FIELD_IMAGE_FALLBACK || "").trim().toLowerCase() ||
+                "s3";
 
               if (
                 fallbackMode === "local" ||
@@ -572,8 +565,7 @@ const fieldService = {
               }
 
               const message =
-                (error as Error)?.message ||
-                "Không thể tải ảnh lên bộ nhớ S3";
+                (error as Error)?.message || "Không thể tải ảnh lên bộ nhớ S3";
               throw new ApiError(
                 StatusCodes.BAD_GATEWAY,
                 `Upload ảnh thất bại: ${message}`
@@ -603,6 +595,82 @@ const fieldService = {
       }
       throw error;
     }
+  },
+
+  async updateForShop(
+    shopCode: number,
+    fieldId: number,
+    payload: Partial<{
+      field_name: string;
+      sport_type: string;
+      address: string;
+      price_per_hour: number;
+      status: string;
+    }>
+  ) {
+    const shop = await fieldModel.findShopByCode(shopCode);
+    if (!shop) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop");
+    }
+
+    const field = await fieldModel.findById(fieldId);
+    if (!field || field.shop_code !== shopCode) {
+      return null;
+    }
+
+    const dataToUpdate: Partial<{
+      field_name: string;
+      sport_type: string;
+      address: string;
+      price_per_hour: number;
+      status: FieldStatusDb;
+    }> = {};
+
+    if (payload.field_name) {
+      dataToUpdate.field_name = payload.field_name.trim();
+    }
+    if (payload.sport_type) {
+      const sportTypeDb = mapSportTypeToDb(payload.sport_type);
+      if (!sportTypeDb) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Loại hình thể thao không hợp lệ"
+        );
+      }
+      dataToUpdate.sport_type = sportTypeDb;
+    }
+    if (payload.address) {
+      dataToUpdate.address = payload.address.trim();
+    }
+    if (payload.price_per_hour) {
+      const parsedPrice = Number(payload.price_per_hour);
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Giá thuê mỗi giờ không hợp lệ"
+        );
+      }
+      dataToUpdate.price_per_hour = parsedPrice;
+    }
+    if (payload.status) {
+      const statusDb = mapStatusToDb(payload.status);
+      if (!statusDb) {
+        throw new ApiError(StatusCodes.BAD_REQUEST, "Trạng thái không hợp lệ");
+      }
+      dataToUpdate.status = statusDb;
+    }
+
+    if (Object.keys(dataToUpdate).length === 0) {
+      return this.getById(fieldId);
+    }
+
+    const updated = await fieldModel.updateField(fieldId, dataToUpdate);
+
+    if (!updated) {
+      return null;
+    }
+
+    return this.getById(fieldId);
   },
 
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {

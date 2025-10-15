@@ -32,16 +32,13 @@ const authController = {
       let user: any = null;
       try {
         user = await authModel.getUserAuth(login);
-      } catch (e: any) {
-        return res.status(StatusCodes.SERVICE_UNAVAILABLE).json({
-          success: false,
-          statusCode: StatusCodes.SERVICE_UNAVAILABLE,
-          data: null,
-          error: {
-            status: "error",
-            message: e?.message || "Database connection error",
-          },
-        });
+      } catch (dbError) {
+        return next(
+          new ApiError(
+            StatusCodes.SERVICE_UNAVAILABLE,
+            (dbError as Error).message || "Database connection error"
+          )
+        );
       }
 
       if (!user) {
@@ -50,12 +47,7 @@ const authController = {
         );
       }
 
-      const {
-        PasswordHash,
-        IsActive,
-        _destroy,
-        ...dataUser
-      } = user as {
+      const { PasswordHash, IsActive, _destroy, ...dataUser } = user as {
         PasswordHash: string;
         IsActive?: number | null;
         _destroy?: number | null;
@@ -81,37 +73,27 @@ const authController = {
       const isMatch = await authService.verifyPassword(password, PasswordHash);
       if (!isMatch) {
         return next(
-          new ApiError(StatusCodes.UNAUTHORIZED, "Email hoặc mật khẩu không đúng")
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Email hoặc mật khẩu không đúng"
+          )
         );
       }
 
-      const toNumberOrUndefined = (value: unknown) => {
-        const num = Number(value);
-        return Number.isFinite(num) ? num : undefined;
-      };
-
-      const safeUserId =
-        toNumberOrUndefined((user as any)?.UserID) ??
-        toNumberOrUndefined((dataUser as any)?.UserID) ??
-        toNumberOrUndefined((dataUser as any)?.user_code) ??
-        0;
-      const safeLevelCode =
-        toNumberOrUndefined((user as any)?.LevelCode) ??
-        toNumberOrUndefined((dataUser as any)?.LevelCode) ??
-        toNumberOrUndefined((dataUser as any)?.level_code);
+      // Đơn giản hóa việc chuẩn hóa dữ liệu user
+      const userId = Number(
+        (user as any)?.UserID ?? (user as any)?.user_code ?? 0
+      );
+      const levelCode = Number(
+        (user as any)?.LevelCode ?? (user as any)?.level_code
+      );
 
       const normalizedUser = {
         ...dataUser,
-        UserID: safeUserId,
-        user_code: safeUserId,
-        LevelCode:
-          safeLevelCode !== undefined
-            ? safeLevelCode
-            : (dataUser as any)?.LevelCode,
-        level_code:
-          safeLevelCode !== undefined
-            ? safeLevelCode
-            : (dataUser as any)?.level_code,
+        UserID: userId,
+        user_code: userId,
+        LevelCode: levelCode,
+        level_code: levelCode,
         IsActive,
         isActive: Number(IsActive ?? 0) ? 1 : 0,
       };
@@ -204,42 +186,39 @@ const authController = {
     return res.json({ success: true, message: "Xác minh thành công" });
   },
 
-  // =================== CHECK EMAIL (Forgot: kiểm tra trước khi gửi link) ===================
-  async checkEmailExists(req: Request, res: Response) {
-    const email = String(req.body?.email || "")
-      .trim()
-      .toLowerCase();
-    if (!email) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        message: "Thiếu email",
-      });
-    }
-    const existed = await authModel.findByEmailOrUserId(email, "");
-    return res.json({
-      success: true,
-      exists: !!existed,
-      message: !!existed ? "Email tồn tại" : "Email không tồn tại",
-    });
+  // =================== CHECK EMAIL (Forgot: kiểm tra trước khi gửi link) - ĐÃ GỘP VÀO forgotPassword ===================
+  // Endpoint này không còn cần thiết và nên được loại bỏ để tránh email enumeration.
+  // Giữ lại hàm trống để tránh lỗi nếu route chưa được xóa, nhưng sẽ trả về lỗi.
+  async checkEmailExists(_req: Request, res: Response, next: NextFunction) {
+    return next(
+      new ApiError(
+        StatusCodes.GONE,
+        "This endpoint is deprecated for security reasons."
+      )
+    );
   },
 
   // =================== FORGOT PASSWORD (gửi link) ===================
   async forgotPassword(req: Request, res: Response) {
     const schema = z.object({ email: z.string().email() });
     const parsed = schema.safeParse(req.body);
+
+    // Luôn trả về thông báo thành công chung để tránh dò email
+    const genericSuccessResponse = () =>
+      res.json({
+        success: true,
+        message: "Nếu email tồn tại, liên kết đặt lại mật khẩu đã được gửi.",
+      });
+
     if (!parsed.success) {
-      return res
-        .status(StatusCodes.BAD_REQUEST)
-        .json({ success: false, message: "Email không hợp lệ" });
+      return genericSuccessResponse();
     }
 
     const email = parsed.data.email.trim().toLowerCase();
     const user = await authModel.findByEmailOrUserId(email, "");
     if (!user) {
-      // Bạn muốn báo rõ là không tồn tại
-      return res
-        .status(StatusCodes.NOT_FOUND)
-        .json({ success: false, message: "Email không tồn tại" });
+      // Không làm gì cả, chỉ trả về thông báo thành công ở cuối
+      return genericSuccessResponse();
     }
 
     const ttlMin = Number(process.env.RESET_TOKEN_TTL_MIN || 30);
@@ -255,17 +234,15 @@ const authController = {
 
     try {
       await sendResetPasswordEmail(email, resetLink);
-    } catch (e: any) {
-      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
-        success: false,
-        message: e?.message || "Không gửi được email",
-      });
+    } catch (error) {
+      // Ghi lại lỗi nhưng không báo cho người dùng để bảo mật
+      console.error(
+        `[FORGOT_PASSWORD] Failed to send email to ${email}:`,
+        error
+      );
     }
 
-    return res.json({
-      success: true,
-      message: "Nếu email tồn tại, liên kết đặt lại mật khẩu đã được gửi.",
-    });
+    return genericSuccessResponse();
   },
 
   // =================== RESET PASSWORD (đặt mật khẩu mới) ===================
