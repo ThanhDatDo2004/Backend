@@ -258,6 +258,60 @@ const shopFieldController = {
     }
   },
 
+  async listForMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const shop = await shopService.getByUserId(userId);
+      if (!shop || !shop.shop_code) {
+        return next(
+          new ApiError(StatusCodes.FORBIDDEN, "Bạn không sở hữu shop nào.")
+        );
+      }
+      req.params.shopCode = String(shop.shop_code);
+      return shopFieldController.list(req, res, next);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async createForMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const shop = await shopService.getByUserId(userId);
+      if (!shop || !shop.shop_code) {
+        return next(
+          new ApiError(StatusCodes.FORBIDDEN, "Bạn không sở hữu shop nào.")
+        );
+      }
+      req.params.shopCode = String(shop.shop_code);
+      return shopFieldController.create(req, res, next);
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async updateForMe(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = Number(

@@ -1,4 +1,4 @@
-import { RowDataPacket } from "mysql2";
+import { RowDataPacket, ResultSetHeader } from "mysql2";
 import { PoolConnection } from "mysql2/promise";
 import pool from "../configs/db.config";
 import { IError } from "../interfaces/common";
@@ -30,10 +30,10 @@ const queryService = {
       }
    },
 
-   execQuery: async (query: string, params: any[]): Promise<boolean> => {
+   execQuery: async (query: string, params: any[]): Promise<ResultSetHeader> => {
       try {
-         await pool.query<RowDataPacket[]>(query, params);
-         return true;
+         const [result] = await pool.query<ResultSetHeader>(query, params);
+         return result;
       } catch (error: unknown) {
          throw error;
       }

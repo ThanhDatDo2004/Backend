@@ -581,8 +581,8 @@ const fieldModel = {
     }
     return !!(
       result &&
-      typeof result.affectedRows === "number" &&
-      result.affectedRows > 0
+      typeof (result as any).affectedRows === "number" &&
+      (result as any).affectedRows > 0
     );
   },
 
