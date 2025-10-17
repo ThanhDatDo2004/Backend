@@ -117,14 +117,14 @@ const fieldController = {
 
   async detail(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id) || id <= 0) {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
         );
       }
 
-      const field = await fieldService.getById(id);
+      const field = await fieldService.getById(fieldCode);
       if (!field) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
       }
@@ -142,8 +142,8 @@ const fieldController = {
 
   async uploadImage(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id) || id <= 0) {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
         );
@@ -159,7 +159,7 @@ const fieldController = {
         );
       }
 
-      const created = await fieldService.addImage(id, file);
+      const created = await fieldService.addImage(fieldCode, file);
       if (!created) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
       }
@@ -177,8 +177,8 @@ const fieldController = {
 
   async availability(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id) || id <= 0) {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
         );
@@ -196,11 +196,11 @@ const fieldController = {
         );
       }
 
-      const slots = await fieldService.getAvailability(id, date);
+      const slots = await fieldService.getAvailability(fieldCode, date);
 
       return apiResponse.success(
         res,
-        { field_code: id, date: date ?? null, slots },
+        { field_code: fieldCode, date: date ?? null, slots },
         "Fetched field availability successfully",
         StatusCodes.OK
       );
@@ -211,8 +211,8 @@ const fieldController = {
 
   async confirmBooking(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = Number(req.params.id);
-      if (!Number.isFinite(id) || id <= 0) {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
         );
@@ -230,7 +230,7 @@ const fieldController = {
         );
       }
 
-      const result = await bookingService.confirmFieldBooking(id, {
+      const result = await bookingService.confirmFieldBooking(fieldCode, {
         slots,
         customer: typeof customer === "object" ? customer : undefined,
         payment_method:
