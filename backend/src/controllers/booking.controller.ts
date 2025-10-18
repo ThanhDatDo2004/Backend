@@ -53,6 +53,35 @@ const bookingController = {
         params
       );
 
+      // Handle null values for CustomerPhone and CheckinCode
+      const enrichedBookings = bookings.map((booking: any) => ({
+        ...booking,
+        CustomerPhone: booking.CustomerPhone || "Chưa cập nhật",
+        CheckinCode: booking.CheckinCode || "-",
+      }));
+
+      // Fetch all slots for each booking
+      const bookingsWithSlots = await Promise.all(
+        enrichedBookings.map(async (booking: any) => {
+          const [slots] = await queryService.query<RowDataPacket[]>(
+            `SELECT 
+               SlotID,
+               PlayDate, 
+               DATE_FORMAT(StartTime, '%H:%i') as StartTime,
+               DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+               Status 
+             FROM Field_Slots 
+             WHERE BookingCode = ?
+             ORDER BY PlayDate, StartTime`,
+            [booking.BookingCode]
+          );
+          return {
+            ...booking,
+            slots: slots || [],
+          };
+        })
+      );
+
       // Get total
       let countQuery = `SELECT COUNT(*) as total FROM Bookings WHERE CustomerUserID = ?`;
       const countParams: any[] = [userId];
@@ -68,7 +97,7 @@ const bookingController = {
       return apiResponse.success(
         res,
         {
-          data: bookings,
+          data: bookingsWithSlots,
           pagination: {
             limit: Number(limit),
             offset: Number(offset),
@@ -291,11 +320,17 @@ const bookingController = {
         );
       }
 
-      // Get slots
+      // Get all slots for this booking (not just the first one)
       const [slots] = await queryService.query<RowDataPacket[]>(
-        `SELECT SlotID, PlayDate, StartTime, EndTime, Status 
+        `SELECT 
+           SlotID, 
+           PlayDate, 
+           DATE_FORMAT(StartTime, '%H:%i') as StartTime,
+           DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+           Status 
          FROM Field_Slots 
-         WHERE BookingCode = ?`,
+         WHERE BookingCode = ?
+         ORDER BY PlayDate, StartTime`,
         [searchBookingCode]
       );
 
@@ -597,13 +632,12 @@ const bookingController = {
    */
   async getCheckinCode(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
       const { bookingCode } = req.params;
 
       const [bookings] = await queryService.query<RowDataPacket[]>(
         `SELECT CheckinCode, BookingStatus FROM Bookings 
-         WHERE BookingCode = ? AND CustomerUserID = ?`,
-        [bookingCode, userId]
+         WHERE BookingCode = ?`,
+        [bookingCode]
       );
 
       if (!bookings?.[0]) {
@@ -634,6 +668,153 @@ const bookingController = {
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
           (error as Error)?.message || "Lỗi lấy mã check-in"
+        )
+      );
+    }
+  },
+
+  /**
+   * Liệt kê booking của shop (tất cả fields)
+   * GET /api/shops/me/bookings
+   */
+  async listShopBookings(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.UserID;
+      const {
+        status,
+        limit = 10,
+        offset = 0,
+        sort = "CreateAt",
+        order = "DESC",
+      } = req.query;
+
+      // Validate limit
+      const validLimit = Math.min(Math.max(1, Number(limit)), 100);
+      const validOffset = Math.max(0, Number(offset));
+
+      // Lấy shopCode của shop owner
+      const [shops] = await queryService.query<RowDataPacket[]>(
+        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
+        [userId]
+      );
+
+      if (!shops?.[0]) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop của bạn")
+        );
+      }
+
+      const shopCode = shops[0].ShopCode;
+
+      // Auto-cancel pending bookings older than 10 minutes
+      await queryService.query<ResultSetHeader>(
+        `UPDATE Bookings 
+         SET BookingStatus = 'cancelled', 
+             PaymentStatus = 'failed',
+             UpdateAt = NOW()
+         WHERE BookingStatus = 'pending' 
+         AND TIMESTAMPDIFF(MINUTE, CreateAt, NOW()) > 10
+         AND FieldCode IN (SELECT FieldCode FROM Fields WHERE ShopCode = ?)`,
+        [shopCode]
+      );
+
+      let query = `SELECT b.BookingCode, b.FieldCode, b.CustomerUserID, 
+                          b.BookingStatus, b.PaymentStatus, b.PlayDate, 
+                          b.StartTime, b.EndTime, b.TotalPrice, b.NetToShop,
+                          b.CheckinCode, b.CheckinTime, b.CreateAt, b.UpdateAt,
+                          u.FullName as CustomerName, b.CustomerPhone
+                   FROM Bookings b
+                   JOIN Fields f ON b.FieldCode = f.FieldCode
+                   LEFT JOIN Users u ON b.CustomerUserID = u.UserID
+                   WHERE f.ShopCode = ?`;
+      const params: any[] = [shopCode];
+
+      if (status) {
+        query += ` AND b.BookingStatus = ?`;
+        params.push(status);
+      }
+
+      // Validate sort field
+      const validSortFields = [
+        "CreateAt",
+        "PlayDate",
+        "TotalPrice",
+        "BookingStatus",
+      ];
+      const sortField = validSortFields.includes(sort as string)
+        ? sort
+        : "CreateAt";
+      const sortOrder = order === "ASC" ? "ASC" : "DESC";
+
+      query += ` ORDER BY b.${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
+      params.push(validLimit, validOffset);
+
+      const [bookings] = await queryService.query<RowDataPacket[]>(
+        query,
+        params
+      );
+
+      // Handle null values for CustomerPhone and CheckinCode
+      const enrichedBookings = bookings.map((booking: any) => ({
+        ...booking,
+        CustomerPhone: booking.CustomerPhone || "Chưa cập nhật",
+        CheckinCode: booking.CheckinCode || "-",
+      }));
+
+      // Fetch all slots for each booking
+      const bookingsWithSlots = await Promise.all(
+        enrichedBookings.map(async (booking: any) => {
+          const [slots] = await queryService.query<RowDataPacket[]>(
+            `SELECT 
+               SlotID,
+               PlayDate, 
+               DATE_FORMAT(StartTime, '%H:%i') as StartTime,
+               DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+               Status 
+             FROM Field_Slots 
+             WHERE BookingCode = ?
+             ORDER BY PlayDate, StartTime`,
+            [booking.BookingCode]
+          );
+          return {
+            ...booking,
+            slots: slots || [],
+          };
+        })
+      );
+
+      // Get total
+      let countQuery = `SELECT COUNT(*) as total FROM Bookings b
+                        JOIN Fields f ON b.FieldCode = f.FieldCode
+                        WHERE f.ShopCode = ?`;
+      const countParams: any[] = [shopCode];
+      if (status) {
+        countQuery += ` AND b.BookingStatus = ?`;
+        countParams.push(status);
+      }
+      const [countRows] = await queryService.query<RowDataPacket[]>(
+        countQuery,
+        countParams
+      );
+
+      return apiResponse.success(
+        res,
+        {
+          data: bookingsWithSlots,
+          pagination: {
+            limit: validLimit,
+            offset: validOffset,
+            total: countRows?.[0]?.total || 0,
+          },
+        },
+        "Danh sách booking của shop",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Lỗi lấy danh sách booking"
         )
       );
     }

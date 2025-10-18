@@ -9,7 +9,7 @@ router.get("/", requireAuth, bookingController.listBookings);
 router.post("/create", requireAuth, bookingController.createBooking);
 router.get("/:bookingCode", bookingController.getBooking);
 router.patch("/:bookingCode/cancel", requireAuth, bookingController.cancelBooking);
-router.get("/:bookingCode/checkin-code", requireAuth, bookingController.getCheckinCode);
+router.get("/:bookingCode/checkin-code", bookingController.getCheckinCode);
 router.post("/:bookingCode/verify-checkin", bookingController.verifyCheckinCode);
 
 // Admin endpoints

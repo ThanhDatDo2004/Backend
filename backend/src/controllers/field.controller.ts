@@ -5,8 +5,8 @@ import fieldService from "../services/field.service";
 import ApiError from "../utils/apiErrors";
 import bookingService from "../services/booking.service";
 import paymentService from "../services/payment.service";
-import queryService from "../services/query.service";
 import { RowDataPacket } from "mysql2";
+import queryService from "../services/query";
 
 const toNumber = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -178,6 +178,48 @@ const fieldController = {
     }
   },
 
+  async uploadImages(req: Request, res: Response, next: NextFunction) {
+    try {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Vui lòng chọn ít nhất một tập tin hình ảnh để tải lên"
+          )
+        );
+      }
+
+      const uploadedImages = [];
+      for (const file of files) {
+        const created = await fieldService.addImage(fieldCode, file);
+        if (created) {
+          uploadedImages.push(created);
+        }
+      }
+
+      if (uploadedImages.length === 0) {
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân hoặc không thể tải ảnh"));
+      }
+
+      return apiResponse.success(
+        res,
+        { images: uploadedImages },
+        `Tải ${uploadedImages.length} ảnh sân thành công`,
+        StatusCodes.CREATED
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async availability(req: Request, res: Response, next: NextFunction) {
     try {
       const fieldCode = Number(req.params.fieldCode);
@@ -197,6 +239,22 @@ const fieldController = {
             "Định dạng ngày không hợp lệ (YYYY-MM-DD)"
           )
         );
+      }
+
+      // Release expired held slots before getting availability
+      try {
+        await queryService.query(
+          `UPDATE Field_Slots 
+           SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
+           WHERE FieldCode = ? 
+           AND Status = 'held' 
+           AND HoldExpiresAt IS NOT NULL 
+           AND HoldExpiresAt < NOW()`,
+          [fieldCode]
+        );
+      } catch (e) {
+        console.error('Lỗi release expired held slots:', e);
+        // Không throw, tiếp tục xử lý
       }
 
       const slots = await fieldService.getAvailability(fieldCode, date);

@@ -7,6 +7,7 @@ import payoutController from "../controllers/payout.controller";
 import walletController from "../controllers/wallet.controller";
 import { fieldImagesUpload } from "../middlewares/upload.middleware";
 import { requireAuth } from "../middlewares/auth.middleware";
+import bookingController from "../controllers/booking.controller";
 
 const router = express.Router();
 
@@ -17,11 +18,12 @@ router.put("/me", requireAuth, shopController.updateMe);
 
 // Field management
 router.get("/me/fields", requireAuth, shopFieldController.listForMe);
+router.get("/me/fields/:fieldCode", requireAuth, shopFieldController.getForMe);
 router.post("/me/fields", requireAuth, fieldImagesUpload, shopFieldController.createForMe);
 router.get("/:shopCode/fields", shopFieldController.list);
 router.post("/:shopCode/fields", fieldImagesUpload, shopFieldController.create);
-router.put("/me/fields/:fieldCode", requireAuth, shopFieldController.updateForMe);
-router.put("/:shopCode/fields/:fieldCode", requireAuth, shopFieldController.update);
+router.put("/me/fields/:fieldCode", requireAuth, fieldImagesUpload, shopFieldController.updateForMe);
+router.put("/:shopCode/fields/:fieldCode", requireAuth, fieldImagesUpload, shopFieldController.update);
 router.delete("/me/fields/:fieldCode", requireAuth, shopFieldController.removeForMe);
 
 // Pricing routes
@@ -38,5 +40,8 @@ router.get("/me/wallet/transactions", requireAuth, walletController.getWalletTra
 router.post("/me/payout-requests", requireAuth, payoutController.createPayoutRequest);
 router.get("/me/payout-requests", requireAuth, payoutController.listPayoutRequests);
 router.get("/me/payout-requests/:payoutID", requireAuth, payoutController.getPayoutRequest);
+
+// Booking routes for shop
+router.get("/me/bookings", requireAuth, bookingController.listShopBookings);
 
 export default router;

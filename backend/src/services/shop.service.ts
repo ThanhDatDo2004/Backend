@@ -14,15 +14,16 @@ const shopService = {
           s.CreateAt AS created_at,
           s.UpdateAt AS updated_at,
           s.ApprovedAt AS approved_at,
-          COALESCE(
-            sb.AccountNumber,
-            ''
-          ) AS bank_account_number,
-          COALESCE(sb.BankName, '') AS bank_name
+          COALESCE(sb.AccountNumber, '') AS bank_account_number,
+          COALESCE(sb.BankName, '') AS bank_name,
+          COALESCE(sw.Balance, 0) AS wallet_balance,
+          (SELECT COUNT(*) FROM Fields WHERE ShopCode = s.ShopCode) AS field_count,
+          (SELECT COUNT(*) FROM Bookings b JOIN Fields f ON b.FieldCode = f.FieldCode WHERE f.ShopCode = s.ShopCode) AS booking_count
         FROM Shops s
         LEFT JOIN Shop_Bank_Accounts sb
           ON sb.ShopCode = s.ShopCode
          AND (sb.IsDefault = 'Y' OR sb.IsDefault IS NULL)
+        LEFT JOIN Shop_Wallets sw ON sw.ShopCode = s.ShopCode
         WHERE s.UserID = ?
         ORDER BY s.ShopCode ASC
         LIMIT 1
@@ -42,6 +43,9 @@ const shopService = {
       created_at: row.created_at ?? null,
       updated_at: row.updated_at ?? null,
       approved_at: row.approved_at ?? null,
+      wallet_balance: Number(row.wallet_balance ?? 0),
+      field_count: Number(row.field_count ?? 0),
+      booking_count: Number(row.booking_count ?? 0),
     };
   },
 
@@ -114,7 +118,7 @@ const shopService = {
         let shopCode = Number(
           (shopRows as Array<{ ShopCode: number }>)?.[0]?.ShopCode ?? 0
         );
-        
+
         // If no existing shop, create new one
         if (!shopCode) {
           const [insertRes] = await conn.query(

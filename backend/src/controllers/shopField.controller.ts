@@ -9,7 +9,7 @@ import shopService from "../services/shop.service";
 
 const listShopFieldsSchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
-  pageSize: z.coerce.number().int().min(1).max(50).optional(),
+  pageSize: z.coerce.number().int().min(1).max(100).optional(),
   search: z.string().trim().optional(),
   status: z.string().trim().optional(),
 });
@@ -307,6 +307,47 @@ const shopFieldController = {
       }
       req.params.shopCode = String(shop.shop_code);
       return shopFieldController.create(req, res, next);
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getForMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const shop = await shopService.getByUserId(userId);
+      if (!shop || !shop.shop_code) {
+        return next(
+          new ApiError(StatusCodes.FORBIDDEN, "Bạn không sở hữu shop nào.")
+        );
+      }
+
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const field = await fieldService.getFieldDetail(fieldCode);
+      if (!field || field.shop_code !== shop.shop_code) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại hoặc không thuộc quản lý của bạn")
+        );
+      }
+
+      return apiResponse.success(res, field, "Chi tiết sân", StatusCodes.OK);
     } catch (error) {
       next(error);
     }

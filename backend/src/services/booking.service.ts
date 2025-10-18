@@ -179,7 +179,20 @@ async function updateExistingSlot(
   slot: NormalizedSlot
 ) {
   if (!row) return;
-  if (row.Status !== "available") {
+  
+  // Check if slot is available OR if it's held but expired
+  if (row.Status === "held" && row.HoldExpiresAt) {
+    const holdExpiryTime = new Date(row.HoldExpiresAt);
+    const now = new Date();
+    if (now <= holdExpiryTime) {
+      // Hold is still valid, cannot book
+      throw new ApiError(
+        StatusCodes.CONFLICT,
+        `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
+      );
+    }
+    // Hold expired, can proceed
+  } else if (row.Status !== "available") {
     throw new ApiError(
       StatusCodes.CONFLICT,
       `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
@@ -215,12 +228,35 @@ async function insertNewSlot(
         HoldExpiresAt,
         CreatedBy
       )
-      VALUES (?, ?, ?, ?, 'booked', NULL, ?)
+      VALUES (?, ?, ?, ?, 'available', NULL, ?)
+      ON DUPLICATE KEY UPDATE
+        SlotID = LAST_INSERT_ID(SlotID)
     `,
     [fieldCode, slot.db_date, slot.db_start_time, slot.db_end_time, createdBy]
   );
 
   return Number(result.insertId);
+}
+
+/**
+ * Release expired held slots (> 15 minutes)
+ * Change status to 'available' instead of deleting
+ */
+async function releaseExpiredHeldSlots(fieldCode: number) {
+  try {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Field_Slots 
+       SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
+       WHERE FieldCode = ? 
+       AND Status = 'held' 
+       AND HoldExpiresAt IS NOT NULL 
+       AND HoldExpiresAt < NOW()`,
+      [fieldCode]
+    );
+  } catch (e) {
+    console.error('Lỗi release expired held slots:', e);
+    // Không throw, tiếp tục xử lý
+  }
 }
 
 export async function confirmFieldBooking(
@@ -230,6 +266,9 @@ export async function confirmFieldBooking(
   if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ.");
   }
+
+  // Release expired held slots trước
+  await releaseExpiredHeldSlots(fieldCode);
 
   const normalizedSlots = normalizeSlots(payload.slots);
 
@@ -245,7 +284,7 @@ export async function confirmFieldBooking(
 
   const field = fieldRows[0];
   const pricePerSlot = field.DefaultPricePerHour || 100000;
-  const totalPrice = pricePerSlot;
+  const totalPrice = pricePerSlot * normalizedSlots.length;  // Multiply by number of slots
   const platformFee = Math.round(totalPrice * 0.05);
   const netToShop = totalPrice - platformFee;
 
@@ -338,13 +377,25 @@ export async function confirmFieldBooking(
       // 3. Link slots với booking - set status to 'held' for 15 minutes
       // Only lock when payment is confirmed
       const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
-      for (const slot of updatedSlots) {
-        await connection.query<ResultSetHeader>(
-          `UPDATE Field_Slots 
-           SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
-           WHERE SlotID = ?`,
-          [bookingCode, holdExpiryTime, slot.slot_id]
-        );
+      for (let i = 0; i < updatedSlots.length; i++) {
+        const slot = updatedSlots[i];
+        if (i === 0) {
+          // Only set BookingCode for the first slot (UNIQUE KEY constraint)
+          await connection.query<ResultSetHeader>(
+            `UPDATE Field_Slots 
+             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+             WHERE SlotID = ?`,
+            [bookingCode, holdExpiryTime, slot.slot_id]
+          );
+        } else {
+          // Other slots only update status
+          await connection.query<ResultSetHeader>(
+            `UPDATE Field_Slots 
+             SET Status = 'held', HoldExpiresAt = ?, UpdateAt = NOW()
+             WHERE SlotID = ?`,
+            [holdExpiryTime, slot.slot_id]
+          );
+        }
       }
 
       return updatedSlots;
@@ -405,6 +456,22 @@ export async function confirmFieldBooking(
     amount: totalPrice,
     slots: result,
   };
+}
+
+export async function cleanupExpiredHeldSlots() {
+  try {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Field_Slots 
+       SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
+       WHERE Status = 'held' 
+       AND HoldExpiresAt IS NOT NULL 
+       AND HoldExpiresAt < NOW()`,
+      []
+    );
+    console.log("Đã xóa các khung giờ đã hết hạn.");
+  } catch (e) {
+    console.error('Lỗi xóa khung giờ đã hết hạn:', e);
+  }
 }
 
 const bookingService = {

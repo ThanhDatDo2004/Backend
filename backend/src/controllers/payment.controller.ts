@@ -233,6 +233,107 @@ const paymentController = {
   },
 
   /**
+   * Check payment status - wait for SePay webhook
+   * GET /api/payments/bookings/:bookingCode/verify
+   */
+  async verifyPayment(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { bookingCode } = req.params;
+
+      if (!bookingCode) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
+        );
+      }
+
+      // Normalize booking code
+      let searchBookingCode: number;
+      const bookingCodeNum = Number(bookingCode);
+      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
+        searchBookingCode = bookingCodeNum;
+      } else {
+        const match = String(bookingCode).match(/(\d+)/);
+        if (match) {
+          searchBookingCode = Number(match[1]);
+        } else {
+          return next(
+            new ApiError(
+              StatusCodes.BAD_REQUEST,
+              "BookingCode format không hợp lệ"
+            )
+          );
+        }
+      }
+
+      // Get payment
+      const payment = await paymentService.getPaymentByBookingCode(searchBookingCode as any);
+      if (!payment) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
+        );
+      }
+
+      // If already paid, return success
+      if (payment.PaymentStatus === "paid") {
+        return apiResponse.success(
+          res,
+          {
+            paymentID: payment.PaymentID,
+            bookingCode: searchBookingCode,
+            status: "paid",
+            message: "Thanh toán đã được xác nhận"
+          },
+          "Thanh toán đã hoàn tất",
+          StatusCodes.OK
+        );
+      }
+
+      // Check if SePay webhook has been called
+      const [logs] = await queryService.query<RowDataPacket[]>(
+        `SELECT LogID FROM Payment_Logs 
+         WHERE PaymentID = ? AND Action = 'sepay_webhook' 
+         LIMIT 1`,
+        [payment.PaymentID]
+      );
+
+      if (logs?.[0]) {
+        // Webhook đã gọi, payment đã được update
+        return apiResponse.success(
+          res,
+          {
+            paymentID: payment.PaymentID,
+            bookingCode: searchBookingCode,
+            status: "paid",
+            message: "Thanh toán đã được xác nhận từ SePay"
+          },
+          "Thanh toán thành công",
+          StatusCodes.OK
+        );
+      }
+
+      // Chưa nhận webhook
+      return apiResponse.success(
+        res,
+        {
+          paymentID: payment.PaymentID,
+          bookingCode: searchBookingCode,
+          status: "pending",
+          message: "Vui lòng quét mã QR để chuyển tiền. Hệ thống sẽ tự động cập nhật khi nhận được tiền."
+        },
+        "Chờ xác nhận thanh toán",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Không thể kiểm tra thanh toán"
+        )
+      );
+    }
+  },
+
+  /**
    * Webhook callback từ SePay (thay thế Momo)
    * POST /api/payments/webhook/sepay
    */
@@ -253,6 +354,38 @@ const paymentController = {
         description,
         des,
       } = req.body || {};
+
+      const normalizedTransferType =
+        typeof transferType === "string"
+          ? transferType.trim().toLowerCase()
+          : "";
+      const isIncomingTransfer =
+        ["in", "incoming", "credit"].includes(normalizedTransferType) ||
+        normalizedTransferType.includes("transfer_in") ||
+        normalizedTransferType.includes("nap");
+      const normalizedTransferAmount =
+        typeof transferAmount === "string"
+          ? Number(transferAmount.replace(/[^\d.-]/g, ""))
+          : typeof transferAmount === "number"
+          ? transferAmount
+          : null;
+      const transferAmountValue =
+        typeof normalizedTransferAmount === "number" &&
+        Number.isFinite(normalizedTransferAmount) &&
+        normalizedTransferAmount > 0
+          ? normalizedTransferAmount
+          : null;
+
+      // DEBUG: Log webhook received
+      console.log("=== SePay Webhook Received ===");
+      console.log("ID:", id);
+      console.log("TransferType:", transferType);
+      console.log("Amount:", transferAmountValue ?? transferAmount);
+      console.log("Content:", content);
+      console.log("Description:", description);
+      console.log("Des:", des);
+      console.log("ReferenceCode:", referenceCode);
+      console.log("==============================");
 
       // Idempotency: nếu đã log id này rồi thì coi như xử lý xong
       try {
@@ -302,13 +435,13 @@ const paymentController = {
       }
 
       // Fallback: match by amount to the most recent pending payment
-      if (!payment && transferType === "in" && transferAmount) {
+      if (!payment && isIncomingTransfer && transferAmountValue) {
         try {
           const [rows] = await queryService.query<RowDataPacket[]>(
             `SELECT * FROM Payments_Admin 
              WHERE PaymentStatus = 'pending' AND Amount = ? 
              ORDER BY CreateAt DESC LIMIT 1`,
-            [transferAmount]
+            [transferAmountValue]
           );
           if (rows?.[0]) payment = rows[0];
         } catch (_) {}
@@ -328,7 +461,7 @@ const paymentController = {
       }
 
       // Nếu là giao dịch vào (in) và có mapping payment thì xác nhận thanh toán
-      if (transferType === "in" && payment) {
+      if (isIncomingTransfer && payment) {
         try {
           await paymentService.updatePaymentStatus(
             payment.PaymentID,

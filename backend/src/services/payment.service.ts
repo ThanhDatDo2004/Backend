@@ -1,7 +1,8 @@
-import { RowDataPacket, ResultSetHeader } from "mysql2";
 import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
+import { RowDataPacket, ResultSetHeader } from "mysql2";
+import { sendBookingConfirmationEmail } from "./mail.service";
 
 const PLATFORM_FEE_PERCENT = 5; // 5% admin fee
 const SHOP_EARNING_PERCENT = 95; // 95% shop earning
@@ -196,6 +197,40 @@ export async function handlePaymentSuccess(paymentID: number) {
     ) VALUES (?, ?, 'credit_settlement', ?, 'Payment from booking', 'completed', NOW())`,
     [shopCode, payment.BookingCode, fees.netToShop]
   );
+
+  // Gửi email xác nhận đặt lịch
+  if (payment.BookingCode) {
+    try {
+      const [bookingInfo] = await queryService.query<RowDataPacket[]>(
+        `SELECT b.BookingCode, b.CustomerEmail, b.CustomerName, b.CheckinCode,
+                f.FieldName, b.PlayDate, b.StartTime, b.EndTime
+         FROM Bookings b
+         JOIN Fields f ON b.FieldCode = f.FieldCode
+         WHERE b.BookingCode = ?`,
+        [payment.BookingCode]
+      );
+
+      if (bookingInfo?.[0]) {
+        const booking = bookingInfo[0];
+        const playDateStr = new Date(booking.PlayDate).toLocaleDateString(
+          "vi-VN"
+        );
+        const timeSlot = `${booking.StartTime} - ${booking.EndTime}`;
+
+        await sendBookingConfirmationEmail(
+          booking.CustomerEmail,
+          String(booking.BookingCode),
+          booking.CheckinCode,
+          booking.FieldName,
+          playDateStr,
+          timeSlot
+        );
+      }
+    } catch (e) {
+      console.error("Lỗi gửi email xác nhận:", e);
+      // Không throw, tiếp tục xử lý
+    }
+  }
 
   return {
     success: true,

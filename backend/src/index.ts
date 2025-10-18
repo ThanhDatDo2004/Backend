@@ -15,7 +15,7 @@ const allowedOrigins = ["http://localhost:5173"];
 const corsOptions: cors.CorsOptions = {
   origin: allowedOrigins,
   credentials: false, // FE không dùng cookie; có thể set true nếu cần
-  methods: ["GET", "POST", "PATCH", "OPTIONS"], // Đúng theo spec
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // Đúng theo spec
   allowedHeaders: ["Content-Type", "Authorization"], // Đúng theo spec
 };
 
@@ -43,16 +43,13 @@ import adminRouter from "./routes/admin.routes";
 import paymentRouter from "./routes/payment.routes";
 import notificationRouter from "./routes/notification.routes";
 import bookingRouter from "./routes/booking.routes";
-import { requireAuth } from "./middlewares/auth.middleware";
-import shopController from "./controllers/shop.controller";
+import { cleanupExpiredHeldSlots } from "./services/booking.service";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadsDir = path.resolve(__dirname, "../uploads");
 
 app.use("/api/auth", authRouter);
-app.get("/api/shops/me", requireAuth, shopController.current);
-app.put("/api/shops/me", requireAuth, shopController.updateMe);
 app.use("/api/fields", fieldRouter);
 app.use("/api/shops", shopRouter);
 app.use("/api/bookings", bookingRouter);
@@ -73,6 +70,12 @@ app.use(
 app.get("/api/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date() });
 });
+
+// Setup cleanup job for expired held slots
+// Run every minute
+setInterval(async () => {
+  await cleanupExpiredHeldSlots();
+}, 60 * 1000); // 60 seconds
 
 //error handler 404
 app.use((req: Request, res: Response, next: NextFunction) => {
