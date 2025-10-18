@@ -4,6 +4,9 @@ import apiResponse from "../core/respone";
 import fieldService from "../services/field.service";
 import ApiError from "../utils/apiErrors";
 import bookingService from "../services/booking.service";
+import paymentService from "../services/payment.service";
+import queryService from "../services/query.service";
+import { RowDataPacket } from "mysql2";
 
 const toNumber = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -242,11 +245,17 @@ const fieldController = {
       return apiResponse.success(
         res,
         {
-          ...result,
+          booking_code: result.booking_code,
+          qr_code: result.qr_code,
+          paymentID: result.paymentID,
+          amount: result.amount,
+          transaction_id: result.transaction_id,
+          payment_status: result.payment_status,
           payment_method:
-            typeof payment_method === "string" ? payment_method : "mock_wallet",
+            typeof payment_method === "string" ? payment_method : "bank_transfer",
+          slots: result.slots,
         },
-        "Thanh toán ảo thành công. Khung giờ đã được giữ chỗ.",
+        "Tạo booking thành công. Mã QR SePay đã sẵn sàng.",
         StatusCodes.OK
       );
     } catch (error) {

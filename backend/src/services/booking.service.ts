@@ -49,6 +49,9 @@ export type ConfirmBookingResult = {
   transaction_id: string;
   payment_status: "mock_success";
   field_code: number;
+  qr_code: string;
+  paymentID: number;
+  amount: number;
   slots: Array<{
     slot_id: number;
     play_date: string;
@@ -225,9 +228,28 @@ export async function confirmFieldBooking(
 
   const normalizedSlots = normalizeSlots(payload.slots);
 
+  // Lấy field info để tính giá
+  const [fieldRows] = await queryService.query<RowDataPacket[]>(
+    `SELECT FieldCode, DefaultPricePerHour FROM Fields WHERE FieldCode = ?`,
+    [fieldCode]
+  );
+
+  if (!fieldRows?.[0]) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân.");
+  }
+
+  const field = fieldRows[0];
+  const pricePerSlot = field.DefaultPricePerHour || 100000;
+  const totalPrice = pricePerSlot;
+  const platformFee = Math.round(totalPrice * 0.05);
+  const netToShop = totalPrice - platformFee;
+
+  let bookingCode: number = 0;
+
   const result = await queryService.execTransaction(
     "confirmFieldBooking",
     async (connection) => {
+      // 1. Xử lý slots (lock, update, insert)
       const updatedSlots: ConfirmBookingResult["slots"] = [];
 
       for (const slot of normalizedSlots) {
@@ -264,18 +286,107 @@ export async function confirmFieldBooking(
         );
       }
 
+      // 2. Tạo booking thực vào DB
+      const userID = payload.created_by || 1;
+      const playDate = normalizedSlots[0].db_date;
+      const startTime = normalizedSlots[0].db_start_time;
+      const endTime = normalizedSlots[0].db_end_time;
+
+      const [bookingResult] = await connection.query<ResultSetHeader>(
+        `INSERT INTO Bookings (
+          FieldCode,
+          CustomerUserID,
+          PlayDate,
+          StartTime,
+          EndTime,
+          TotalPrice,
+          PlatformFee,
+          NetToShop,
+          BookingStatus,
+          PaymentStatus,
+          CreateAt,
+          UpdateAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        [
+          fieldCode,
+          userID,
+          playDate,
+          startTime,
+          endTime,
+          totalPrice,
+          platformFee,
+          netToShop,
+        ]
+      );
+
+      bookingCode = (bookingResult as any).insertId;
+
+      // 3. Link slots với booking
+      for (const slot of updatedSlots) {
+        await connection.query<ResultSetHeader>(
+          `UPDATE Field_Slots 
+           SET Status = 'booked', BookingCode = ?, UpdateAt = NOW()
+           WHERE SlotID = ?`,
+          [bookingCode, slot.slot_id]
+        );
+      }
+
       return updatedSlots;
     }
   );
 
-  const bookingCode = generateBookingCode();
+  // Return INT booking code thực từ DB
   const transactionId = generateTransactionId();
 
+  // Tạo payment record
+  const [bankRows] = await queryService.query<RowDataPacket[]>(
+    `SELECT AdminBankID FROM Admin_Bank_Accounts WHERE IsDefault = 'Y' LIMIT 1`,
+    []
+  );
+
+  if (!bankRows?.[0]) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Chưa setup tài khoản ngân hàng admin"
+    );
+  }
+
+  const adminBankID = bankRows[0].AdminBankID;
+  const paymentMethod = "bank_transfer";
+
+  // Tạo payment
+  const [paymentResult] = await queryService.query<ResultSetHeader>(
+    `INSERT INTO Payments_Admin (
+      BookingCode,
+      AdminBankID,
+      PaymentMethod,
+      Amount,
+      PaymentStatus,
+      CreateAt
+    ) VALUES (?, ?, ?, ?, 'pending', NOW())`,
+    [bookingCode, adminBankID, paymentMethod, totalPrice]
+  );
+
+  const paymentID = (paymentResult as any).insertId;
+
+  // Build SePay QR URL
+  const sepayAcc = process.env.SEPAY_ACC || "96247THUERE";
+  const sepayBank = process.env.SEPAY_BANK || "BIDV";
+  const des = `BK${bookingCode}`;
+  const qrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(
+    sepayAcc
+  )}&bank=${encodeURIComponent(sepayBank)}&amount=${encodeURIComponent(
+    totalPrice
+  )}&des=${encodeURIComponent(des)}`;
+
   return {
-    booking_code: bookingCode,
+    booking_code: String(bookingCode),
     transaction_id: transactionId,
     payment_status: "mock_success",
     field_code: fieldCode,
+    qr_code: qrUrl,
+    paymentID: paymentID,
+    amount: totalPrice,
     slots: result,
   };
 }

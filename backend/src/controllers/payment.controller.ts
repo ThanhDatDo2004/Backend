@@ -15,6 +15,7 @@ const paymentController = {
     try {
       const { bookingCode } = req.params;
       const { payment_method = "bank_transfer" } = req.body;
+      const userId = (req as any).user?.UserID;
 
       if (!bookingCode) {
         return next(
@@ -33,40 +34,31 @@ const paymentController = {
         );
       }
 
-      // Normalize booking code for INT column: use digits if present
-      let searchBookingCode: number;
-      const bookingCodeNum = Number(bookingCode);
-      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
-        searchBookingCode = bookingCodeNum;
-      } else {
-        const match = String(bookingCode).match(/(\d+)/);
-        if (match) {
-          searchBookingCode = Number(match[1]);
-        } else {
-          return next(
-            new ApiError(
-              StatusCodes.BAD_REQUEST,
-              "BookingCode format không hợp lệ"
-            )
-          );
-        }
+      // Try to find existing booking by searchable identifier
+      // First, try direct numeric match (if bookingCode is already a number in DB)
+      let existingBooking: any = null;
+
+      // Search strategy: try numeric parsing first
+      const numericMatch = String(bookingCode).match(/(\d+)/);
+      if (numericMatch) {
+        const numCode = Number(numericMatch[1]);
+        const [bookingRows] = await queryService.query<RowDataPacket[]>(
+          `SELECT b.*, f.ShopCode, f.FieldCode, f.DefaultPricePerHour 
+           FROM Bookings b
+           JOIN Fields f ON b.FieldCode = f.FieldCode
+           WHERE b.BookingCode = ?`,
+          [numCode]
+        );
+        existingBooking = bookingRows?.[0];
       }
 
-      // Kiểm tra booking tồn tại
-      const [bookingRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT b.*, f.ShopCode FROM Bookings b
-         JOIN Fields f ON b.FieldCode = f.FieldCode
-         WHERE b.BookingCode = ?`,
-        [searchBookingCode]
-      );
-
-      if (!bookingRows?.[0]) {
+      if (!existingBooking) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
       }
 
-      const booking = bookingRows[0];
+      const booking = existingBooking;
 
       // Kiểm tra booking chưa thanh toán
       if (booking.PaymentStatus === "paid") {
@@ -92,13 +84,23 @@ const paymentController = {
 
       const adminBankID = bankRows[0].AdminBankID;
 
-      // Tạo payment record
+      // Tạo payment record với BookingCode thực (INT)
       const paymentInfo = await paymentService.initiatePayment(
-        searchBookingCode as any,
+        booking.BookingCode, // Use the actual INT BookingCode from DB
         booking.TotalPrice,
         adminBankID,
         payment_method
       );
+
+      console.log("DEBUG initiatePayment:", {
+        bookingCode: bookingCode,
+        actualBookingCode: booking.BookingCode,
+        booking: {
+          BookingCode: booking.BookingCode,
+          TotalPrice: booking.TotalPrice,
+        },
+        paymentInfo,
+      });
 
       // Build SePay QR URL (FE can render this URL as <img src="..." />)
       const sepayAcc = process.env.SEPAY_ACC || "96247THUERE";
@@ -169,13 +171,41 @@ const paymentController = {
       }
 
       // Lấy payment info
-      const payment = await paymentService.getPaymentByBookingCode(
+      let payment = await paymentService.getPaymentByBookingCode(
         searchBookingCode as any
       );
 
+      // Nếu payment không tìm thấy (transaction chưa commit), fallback: lấy booking info
       if (!payment) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
+        console.log(
+          `Payment not found for BookingCode ${searchBookingCode}, trying fallback...`
+        );
+
+        // Tìm booking để trả về status pending (payment vẫn đang được init)
+        const [bookingRows] = await queryService.query<RowDataPacket[]>(
+          `SELECT BookingCode, TotalPrice, PaymentStatus FROM Bookings WHERE BookingCode = ?`,
+          [searchBookingCode]
+        );
+
+        if (!bookingRows?.[0]) {
+          return next(
+            new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
+          );
+        }
+
+        const booking = bookingRows[0];
+        return apiResponse.success(
+          res,
+          {
+            paymentID: null,
+            bookingCode: searchBookingCode,
+            bookingId: searchBookingCode,
+            amount: booking.TotalPrice,
+            status: booking.PaymentStatus || "pending",
+            paidAt: null,
+          },
+          "Lấy trạng thái thanh toán thành công (pending)",
+          StatusCodes.OK
         );
       }
 
@@ -337,7 +367,9 @@ const paymentController = {
       return apiResponse.success(
         res,
         { success: true, matched: !!payment },
-        payment ? "SePay webhook processed" : "SePay webhook received - no matching payment",
+        payment
+          ? "SePay webhook processed"
+          : "SePay webhook received - no matching payment",
         StatusCodes.OK
       );
     } catch (error) {
