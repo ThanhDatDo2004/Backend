@@ -149,7 +149,15 @@ export async function handlePaymentSuccess(paymentID: number) {
     [paymentID, payment.BookingCode]
   );
 
-  // Lock slots - change status from 'hold' to 'booked'
+  // Update Booking_Slots - change status from 'pending' to 'booked'
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Booking_Slots 
+     SET Status = 'booked', UpdateAt = NOW()
+     WHERE BookingCode = ? AND Status = 'pending'`,
+    [payment.BookingCode]
+  );
+
+  // Lock Field_Slots - change status from 'held' to 'booked'
   await queryService.query<ResultSetHeader>(
     `UPDATE Field_Slots 
      SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
@@ -201,12 +209,19 @@ export async function handlePaymentSuccess(paymentID: number) {
   // Gửi email xác nhận đặt lịch
   if (payment.BookingCode) {
     try {
+      // Get booking and first slot info for email
       const [bookingInfo] = await queryService.query<RowDataPacket[]>(
         `SELECT b.BookingCode, b.CustomerEmail, b.CustomerName, b.CheckinCode,
-                f.FieldName, b.PlayDate, b.StartTime, b.EndTime
+                f.FieldName, 
+                DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
+                DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
+                DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime
          FROM Bookings b
          JOIN Fields f ON b.FieldCode = f.FieldCode
-         WHERE b.BookingCode = ?`,
+         JOIN Booking_Slots bs ON b.BookingCode = bs.BookingCode
+         WHERE b.BookingCode = ?
+         ORDER BY bs.PlayDate, bs.StartTime
+         LIMIT 1`,
         [payment.BookingCode]
       );
 

@@ -60,17 +60,18 @@ const bookingController = {
         CheckinCode: booking.CheckinCode || "-",
       }));
 
-      // Fetch all slots for each booking
+      // Fetch all slots for each booking from BOOKING_SLOTS
       const bookingsWithSlots = await Promise.all(
         enrichedBookings.map(async (booking: any) => {
           const [slots] = await queryService.query<RowDataPacket[]>(
             `SELECT 
-               SlotID,
-               PlayDate, 
+               Slot_ID,
+               DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
                DATE_FORMAT(StartTime, '%H:%i') as StartTime,
                DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+               PricePerSlot,
                Status 
-             FROM Field_Slots 
+             FROM Booking_Slots 
              WHERE BookingCode = ?
              ORDER BY PlayDate, StartTime`,
             [booking.BookingCode]
@@ -320,15 +321,16 @@ const bookingController = {
         );
       }
 
-      // Get all slots for this booking (not just the first one)
+      // Get all slots for this booking from BOOKING_SLOTS table
       const [slots] = await queryService.query<RowDataPacket[]>(
         `SELECT 
-           SlotID, 
-           PlayDate, 
+           Slot_ID,
+           DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
            DATE_FORMAT(StartTime, '%H:%i') as StartTime,
            DATE_FORMAT(EndTime, '%H:%i') as EndTime,
-           Status 
-         FROM Field_Slots 
+           PricePerSlot,
+           Status
+         FROM Booking_Slots 
          WHERE BookingCode = ?
          ORDER BY PlayDate, StartTime`,
         [searchBookingCode]
@@ -421,7 +423,16 @@ const bookingController = {
         [bookingCode]
       );
 
-      // Rollback slots
+      // Rollback Booking_Slots
+      await queryService.query<ResultSetHeader>(
+        `UPDATE Booking_Slots 
+         SET Status = 'cancelled',
+             UpdateAt = NOW()
+         WHERE BookingCode = ?`,
+        [bookingCode]
+      );
+
+      // Rollback Field_Slots
       await queryService.query<ResultSetHeader>(
         `UPDATE Field_Slots 
          SET Status = 'available',
@@ -719,8 +730,7 @@ const bookingController = {
       );
 
       let query = `SELECT b.BookingCode, b.FieldCode, b.CustomerUserID, 
-                          b.BookingStatus, b.PaymentStatus, b.PlayDate, 
-                          b.StartTime, b.EndTime, b.TotalPrice, b.NetToShop,
+                          b.BookingStatus, b.PaymentStatus, b.TotalPrice, b.NetToShop,
                           b.CheckinCode, b.CheckinTime, b.CreateAt, b.UpdateAt,
                           u.FullName as CustomerName, b.CustomerPhone
                    FROM Bookings b
@@ -761,17 +771,18 @@ const bookingController = {
         CheckinCode: booking.CheckinCode || "-",
       }));
 
-      // Fetch all slots for each booking
+      // Fetch all slots for each booking from BOOKING_SLOTS
       const bookingsWithSlots = await Promise.all(
         enrichedBookings.map(async (booking: any) => {
           const [slots] = await queryService.query<RowDataPacket[]>(
             `SELECT 
-               SlotID,
-               PlayDate, 
+               Slot_ID,
+               DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
                DATE_FORMAT(StartTime, '%H:%i') as StartTime,
                DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+               PricePerSlot,
                Status 
-             FROM Field_Slots 
+             FROM Booking_Slots 
              WHERE BookingCode = ?
              ORDER BY PlayDate, StartTime`,
             [booking.BookingCode]

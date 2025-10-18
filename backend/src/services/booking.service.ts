@@ -330,11 +330,8 @@ export async function confirmFieldBooking(
         );
       }
 
-      // 2. Tạo booking thực vào DB
+      // 2. Tạo booking thực vào DB - CHỈ lưu thông tin chung (không lưu time)
       const userID = payload.created_by || 1;
-      const playDate = normalizedSlots[0].db_date;
-      const startTime = normalizedSlots[0].db_start_time;
-      const endTime = normalizedSlots[0].db_end_time;
       const checkinCode = generateCheckinCode();
 
       const [bookingResult] = await connection.query<ResultSetHeader>(
@@ -344,9 +341,6 @@ export async function confirmFieldBooking(
           CustomerName,
           CustomerEmail,
           CustomerPhone,
-          PlayDate,
-          StartTime,
-          EndTime,
           TotalPrice,
           PlatformFee,
           NetToShop,
@@ -355,16 +349,13 @@ export async function confirmFieldBooking(
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
           userID,
           payload.customer?.name || null,
           payload.customer?.email || null,
           payload.customer?.phone || null,
-          playDate,
-          startTime,
-          endTime,
           totalPrice,
           platformFee,
           netToShop,
@@ -374,28 +365,39 @@ export async function confirmFieldBooking(
 
       bookingCode = (bookingResult as any).insertId;
 
-      // 3. Link slots với booking - set status to 'held' for 15 minutes
-      // Only lock when payment is confirmed
+      // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
       const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
-      for (let i = 0; i < updatedSlots.length; i++) {
-        const slot = updatedSlots[i];
-        if (i === 0) {
-          // Only set BookingCode for the first slot (UNIQUE KEY constraint)
-          await connection.query<ResultSetHeader>(
-            `UPDATE Field_Slots 
-             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
-             WHERE SlotID = ?`,
-            [bookingCode, holdExpiryTime, slot.slot_id]
-          );
-        } else {
-          // Other slots only update status
-          await connection.query<ResultSetHeader>(
-            `UPDATE Field_Slots 
-             SET Status = 'held', HoldExpiresAt = ?, UpdateAt = NOW()
-             WHERE SlotID = ?`,
-            [holdExpiryTime, slot.slot_id]
-          );
-        }
+      for (const slot of normalizedSlots) {
+        // Insert vào Booking_Slots
+        await connection.query<ResultSetHeader>(
+          `INSERT INTO Booking_Slots (
+            BookingCode,
+            FieldCode,
+            PlayDate,
+            StartTime,
+            EndTime,
+            PricePerSlot,
+            Status,
+            CreateAt,
+            UpdateAt
+          ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+          [
+            bookingCode,
+            fieldCode,
+            slot.db_date,
+            slot.db_start_time,
+            slot.db_end_time,
+            pricePerSlot
+          ]
+        );
+
+        // Update Field_Slots (để track sân - giữ nguyên)
+        await connection.query<ResultSetHeader>(
+          `UPDATE Field_Slots 
+           SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+           WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
+          [bookingCode, holdExpiryTime, fieldCode, slot.db_date, slot.db_start_time, slot.db_end_time]
+        );
       }
 
       return updatedSlots;
