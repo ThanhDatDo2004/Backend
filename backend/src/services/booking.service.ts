@@ -302,6 +302,9 @@ export async function confirmFieldBooking(
         `INSERT INTO Bookings (
           FieldCode,
           CustomerUserID,
+          CustomerName,
+          CustomerEmail,
+          CustomerPhone,
           PlayDate,
           StartTime,
           EndTime,
@@ -313,10 +316,13 @@ export async function confirmFieldBooking(
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
           userID,
+          payload.customer?.name || null,
+          payload.customer?.email || null,
+          payload.customer?.phone || null,
           playDate,
           startTime,
           endTime,
@@ -329,13 +335,15 @@ export async function confirmFieldBooking(
 
       bookingCode = (bookingResult as any).insertId;
 
-      // 3. Link slots với booking
+      // 3. Link slots với booking - set status to 'hold' for 15 minutes
+      // Only lock when payment is confirmed
+      const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
       for (const slot of updatedSlots) {
         await connection.query<ResultSetHeader>(
           `UPDATE Field_Slots 
-           SET Status = 'booked', BookingCode = ?, UpdateAt = NOW()
+           SET Status = 'hold', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
            WHERE SlotID = ?`,
-          [bookingCode, slot.slot_id]
+          [bookingCode, holdExpiryTime, slot.slot_id]
         );
       }
 

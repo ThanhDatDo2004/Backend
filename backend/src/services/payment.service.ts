@@ -148,6 +148,14 @@ export async function handlePaymentSuccess(paymentID: number) {
     [paymentID, payment.BookingCode]
   );
 
+  // Lock slots - change status from 'hold' to 'booked'
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Field_Slots 
+     SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
+     WHERE BookingCode = ? AND Status = 'hold'`,
+    [payment.BookingCode]
+  );
+
   // Lấy booking để tính netToShop
   const [bookingRows] = await queryService.query<RowDataPacket[]>(
     `SELECT ShopCode FROM (
@@ -234,6 +242,18 @@ export async function logPaymentAction(
   );
 }
 
+/**
+ * Release held slots when payment fails or hold expires
+ */
+export async function releaseHeldSlots(bookingCode: string | number) {
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Field_Slots 
+     SET Status = 'available', BookingCode = NULL, HoldExpiresAt = NULL, UpdateAt = NOW()
+     WHERE BookingCode = ? AND Status = 'hold'`,
+    [bookingCode]
+  );
+}
+
 const paymentService = {
   calculateFees,
   initiatePayment,
@@ -242,6 +262,7 @@ const paymentService = {
   updatePaymentStatus,
   handlePaymentSuccess,
   logPaymentAction,
+  releaseHeldSlots,
 };
 
 export default paymentService;

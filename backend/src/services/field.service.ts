@@ -226,15 +226,26 @@ function generateSyntheticSlotId(
 }
 
 function mapSlotRow(slot: FieldSlotRow) {
+  // Check if hold has expired
+  let status = slot.status;
+  if (status === "hold" && slot.hold_expires_at) {
+    const holdExpiryTime = new Date(slot.hold_expires_at);
+    const now = new Date();
+    if (now > holdExpiryTime) {
+      // Hold has expired, treat as available
+      status = "available";
+    }
+  }
+  
   return {
     slot_id: slot.slot_id,
     field_code: slot.field_code,
     play_date: slot.play_date,
     start_time: slot.start_time,
     end_time: slot.end_time,
-    status: slot.status,
+    status: status,
     hold_expires_at: slot.hold_expires_at,
-    is_available: slot.status === "available",
+    is_available: status === "available",
   };
 }
 
