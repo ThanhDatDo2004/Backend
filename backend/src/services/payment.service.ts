@@ -152,7 +152,7 @@ export async function handlePaymentSuccess(paymentID: number) {
   await queryService.query<ResultSetHeader>(
     `UPDATE Field_Slots 
      SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
-     WHERE BookingCode = ? AND Status = 'hold'`,
+     WHERE BookingCode = ? AND Status = 'held'`,
     [payment.BookingCode]
   );
 
@@ -249,7 +249,7 @@ export async function releaseHeldSlots(bookingCode: string | number) {
   await queryService.query<ResultSetHeader>(
     `UPDATE Field_Slots 
      SET Status = 'available', BookingCode = NULL, HoldExpiresAt = NULL, UpdateAt = NOW()
-     WHERE BookingCode = ? AND Status = 'hold'`,
+     WHERE BookingCode = ? AND Status = 'held'`,
     [bookingCode]
   );
 }

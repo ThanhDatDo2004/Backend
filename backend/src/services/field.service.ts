@@ -228,7 +228,7 @@ function generateSyntheticSlotId(
 function mapSlotRow(slot: FieldSlotRow) {
   // Check if hold has expired
   let status = slot.status;
-  if (status === "hold" && slot.hold_expires_at) {
+  if (status === "held" && slot.hold_expires_at) {
     const holdExpiryTime = new Date(slot.hold_expires_at);
     const now = new Date();
     if (now > holdExpiryTime) {

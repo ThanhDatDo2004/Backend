@@ -335,13 +335,13 @@ export async function confirmFieldBooking(
 
       bookingCode = (bookingResult as any).insertId;
 
-      // 3. Link slots với booking - set status to 'hold' for 15 minutes
+      // 3. Link slots với booking - set status to 'held' for 15 minutes
       // Only lock when payment is confirmed
       const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
       for (const slot of updatedSlots) {
         await connection.query<ResultSetHeader>(
           `UPDATE Field_Slots 
-           SET Status = 'hold', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+           SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
            WHERE SlotID = ?`,
           [bookingCode, holdExpiryTime, slot.slot_id]
         );
