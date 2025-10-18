@@ -5,7 +5,7 @@
 | Issue                     | File                 | Line(s) | Change                                   |
 | ------------------------- | -------------------- | ------- | ---------------------------------------- |
 | Customer info not saved   | `booking.service.ts` | 301-328 | Add CustomerName, Email, Phone to INSERT |
-| Slot locked immediately   | `booking.service.ts` | 332-340 | Change Status to 'hold' + HoldExpiresAt  |
+| Slot locked immediately   | `booking.service.ts` | 332-340 | Change Status to 'held' + HoldExpiresAt  |
 | No lock on payment        | `payment.service.ts` | 143-152 | Add lock logic in handlePaymentSuccess() |
 | No release on fail        | `payment.service.ts` | 244-251 | Add releaseHeldSlots() function          |
 | Expired holds not handled | `field.service.ts`   | 228-250 | Smart availability check in mapSlotRow() |
@@ -38,7 +38,7 @@ SET Status = 'booked', BookingCode = ?, UpdateAt = NOW()
 
 // AFTER:
 const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000);
-SET Status = 'hold', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
 ```
 
 ---
@@ -49,11 +49,11 @@ SET Status = 'hold', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
 
 ```typescript
 // ADDED after updating booking status:
-// Lock slots - change status from 'hold' to 'booked'
+// Lock slots - change status from 'held' to 'booked'
 await queryService.query<ResultSetHeader>(
   `UPDATE Field_Slots 
    SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
-   WHERE BookingCode = ? AND Status = 'hold'`,
+   WHERE BookingCode = ? AND Status = 'held'`,
   [payment.BookingCode]
 );
 ```
@@ -65,7 +65,7 @@ export async function releaseHeldSlots(bookingCode: string | number) {
   await queryService.query<ResultSetHeader>(
     `UPDATE Field_Slots
      SET Status = 'available', BookingCode = NULL, HoldExpiresAt = NULL, UpdateAt = NOW()
-     WHERE BookingCode = ? AND Status = 'hold'`,
+     WHERE BookingCode = ? AND Status = 'held'`,
     [bookingCode]
   );
 }
@@ -149,17 +149,17 @@ User: Go back → Slot unavailable (locked even if payment fails)
 ```
 User selects slot
     ↓
-Click "Confirm" → Slot Status = 'hold' (TEMP HOLD for 15 min)
+Click "Confirm" → Slot Status = 'held' (TEMP HOLD for 15 min)
               → Save: CustomerName, Email, Phone ✓
     ↓
 Payment page
     ↓
 If Payment succeeds:
-  → Slot: 'hold' → 'booked' (LOCKED FOREVER) ✓
+  → Slot: 'held' → 'booked' (LOCKED FOREVER) ✓
   → Booking Status: 'confirmed'
 
 If Payment fails:
-  → After 15 min: Slot: 'hold' → 'available' (auto-released)
+  → After 15 min: Slot: 'held' → 'available' (auto-released)
   → OR: Manual release if cancelled
     ↓
 User: Go back → Slot available again if no payment ✓

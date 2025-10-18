@@ -61,7 +61,7 @@ INSERT INTO Bookings (
 ├─────────────────────────────────────────────┤
 │ 1. User chọn giờ + info → Click "Xác nhận"
 │ 2. POST /fields/:fieldCode/bookings/confirm
-│ 3. Slot Status = 'hold'                ← 15 phút
+│ 3. Slot Status = 'held'                ← 15 phút
 │    HoldExpiresAt = NOW() + 15 phút
 │ 4. Backend return BookingCode + PaymentID
 │ 5. Frontend display QR code SePay
@@ -79,7 +79,7 @@ INSERT INTO Bookings (
 │ 1. SePay webhook nhận transfer
 │ 2. Backend: updatePaymentStatus("paid")
 │ 3. Gọi handlePaymentSuccess()
-│ 4. Slot Status = 'hold' → 'booked'     ✓ LOCK
+│ 4. Slot Status = 'held' → 'booked'     ✓ LOCK
 │    HoldExpiresAt = NULL
 │ 5. Booking Status = 'pending' → 'confirmed'
 │    Payment Status = 'pending' → 'paid'
@@ -94,7 +94,7 @@ INSERT INTO Bookings (
 │ 1. User không chuyển khoản trong 15 phút
 │ 2. Hold expires → Slot auto release
 │   (Background job hoặc khi check availability)
-│ 3. Slot Status = 'hold' → 'available'
+│ 3. Slot Status = 'held' → 'available'
 │    BookingCode = NULL
 │    HoldExpiresAt = NULL
 │ 4. Frontend: User quay lại /booking/48
@@ -111,18 +111,18 @@ INSERT INTO Bookings (
    // Trước: Status = 'booked'
    SET Status = 'booked', BookingCode = ?, UpdateAt = NOW()
    
-   // Sau: Status = 'hold' với 15 phút expiry
+   // Sau: Status = 'held' với 15 phút expiry
    const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000);
-   SET Status = 'hold', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+   SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
    ```
 
 2. **payment.service.ts** (line 143-152):
    Thêm logic lock slot khi payment success:
    ```typescript
-   // Lock slots - change status from 'hold' to 'booked'
+   // Lock slots - change status from 'held' to 'booked'
    UPDATE Field_Slots 
    SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
-   WHERE BookingCode = ? AND Status = 'hold'
+   WHERE BookingCode = ? AND Status = 'held'
    ```
 
 3. **payment.service.ts** (line 244-251):
@@ -131,7 +131,7 @@ INSERT INTO Bookings (
    export async function releaseHeldSlots(bookingCode: string | number) {
      UPDATE Field_Slots 
      SET Status = 'available', BookingCode = NULL, HoldExpiresAt = NULL
-     WHERE BookingCode = ? AND Status = 'hold'
+     WHERE BookingCode = ? AND Status = 'held'
    }
    ```
 
@@ -180,7 +180,7 @@ ALTER TABLE Field_Slots ADD COLUMN IF NOT EXISTS HoldExpiresAt DATETIME NULL;
 
 -- Status values:
 -- 'available' → Chưa đặt, có sẵn để đặt
--- 'hold'      → Được hold 15 phút, chưa lock vĩnh viễn
+-- 'held'      → Được hold 15 phút, chưa lock vĩnh viễn
 -- 'booked'    → Đã lock (payment thành công hoặc booking confirmed)
 -- 'cancelled' → Đã hủy
 ```

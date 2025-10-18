@@ -247,7 +247,7 @@ const SlotPicker = ({ slots, onSelectSlots }) => {
           disabled={!slot.is_available}
         >
           {slot.start_time} - {slot.end_time}
-          {slot.status === 'hold' && (
+          {slot.status === 'held' && (
             <small>Đang hold</small>  // Optional display
           )}
         </button>
@@ -356,7 +356,7 @@ GET /api/bookings/:bookingCode
 2. Check availability immediately
    - GET /fields/48/availability?date=2025-10-25
    - Slot should show: is_available = false ✓
-   - Status = 'hold'
+   - Status = 'held'
 3. Wait 5 minutes
    - Check again
    - is_available should still = false ✓
