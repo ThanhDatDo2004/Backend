@@ -14,14 +14,14 @@ const payoutController = {
   async createPayoutRequest(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user?.UserID;
-      const { amount, bank_id, note } = req.body;
+      const { amount, bank_id, note, password } = req.body;
 
       if (!amount || amount <= 0) {
         return next(new ApiError(StatusCodes.BAD_REQUEST, "Số tiền phải lớn hơn 0"));
       }
 
-      if (!bank_id) {
-        return next(new ApiError(StatusCodes.BAD_REQUEST, "Vui lòng chọn tài khoản ngân hàng"));
+      if (!password) {
+        return next(new ApiError(StatusCodes.BAD_REQUEST, "Vui lòng nhập mật khẩu để xác nhận"));
       }
 
       // Lấy shop code của user
@@ -36,11 +36,25 @@ const payoutController = {
 
       const shopCode = shopRows[0].ShopCode;
 
+      // Nếu không gửi bank_id, sẽ dùng default (bank_id = 0)
+      const bankId = bank_id || 0;
+      
+      console.log(`[Payout Controller] Request data:`, {
+        userId,
+        shopCode,
+        amount,
+        bank_id_from_request: bank_id,
+        bankId_final: bankId,
+        has_password: !!password
+      });
+
       const result = await payoutService.createPayoutRequest(
         shopCode,
-        bank_id,
+        bankId,
         amount,
-        note
+        note,
+        userId,
+        password
       );
 
       return apiResponse.success(res, result, "Tạo yêu cầu rút tiền thành công", StatusCodes.CREATED);

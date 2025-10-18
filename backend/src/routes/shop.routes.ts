@@ -36,6 +36,9 @@ router.delete("/me/pricing/:pricingId", requireAuth, pricingController.deleteOpe
 router.get("/me/wallet", requireAuth, walletController.getWallet);
 router.get("/me/wallet/transactions", requireAuth, walletController.getWalletTransactions);
 
+// Bank accounts routes
+router.get("/me/bank-accounts", requireAuth, shopController.getBankAccounts);
+
 // Payout routes
 router.post("/me/payout-requests", requireAuth, payoutController.createPayoutRequest);
 router.get("/me/payout-requests", requireAuth, payoutController.listPayoutRequests);

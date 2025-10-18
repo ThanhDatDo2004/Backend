@@ -2,6 +2,8 @@ import { RowDataPacket, ResultSetHeader } from "mysql2";
 import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
+import authService from "./auth";
+import mailService from "./mail.service";
 
 /**
  * Tạo yêu cầu rút tiền
@@ -10,25 +12,93 @@ export async function createPayoutRequest(
   shopCode: number,
   shopBankID: number,
   amount: number,
-  note?: string
+  note?: string,
+  userId?: number,
+  password?: string
 ) {
   // Kiểm tra shop tồn tại
   const [shopRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT ShopCode FROM Shops WHERE ShopCode = ?`,
+    `SELECT ShopCode, ShopName, UserID FROM Shops WHERE ShopCode = ?`,
     [shopCode]
   );
   if (!shopRows?.[0]) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop");
   }
 
-  // Kiểm tra bank account tồn tại
-  const [bankRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT ShopBankID FROM Shop_Bank_Accounts WHERE ShopBankID = ? AND ShopCode = ?`,
-    [shopBankID, shopCode]
-  );
-  if (!bankRows?.[0]) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy tài khoản ngân hàng");
+  const shop = shopRows[0];
+
+  // Xác nhận mật khẩu nếu có userId
+  if (userId && password) {
+    const [userRows] = await queryService.query<RowDataPacket[]>(
+      `SELECT PasswordHash FROM Users WHERE UserID = ?`,
+      [userId]
+    );
+
+    if (!userRows?.[0]) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy người dùng");
+    }
+
+    const user = userRows[0];
+
+    // Verify password using authService (same as login)
+    const isPasswordValid = await authService.verifyPassword(
+      password,
+      user.PasswordHash
+    );
+
+    if (!isPasswordValid) {
+      throw new ApiError(StatusCodes.UNAUTHORIZED, "Mật khẩu không chính xác");
+    }
   }
+
+  // Kiểm tra bank account tồn tại
+  // Nếu bank_id = 0, lấy tài khoản default
+  let bankQuery: string;
+  let bankParams: any[];
+
+  if (shopBankID === 0 || !shopBankID) {
+    // Lấy tài khoản ngân hàng mặc định
+    bankQuery = `SELECT ShopBankID, BankName, AccountNumber, AccountHolder, IsDefault 
+                 FROM Shop_Bank_Accounts 
+                 WHERE ShopCode = ? AND (IsDefault = 'Y' OR IsDefault = 1)`;
+    bankParams = [shopCode];
+    console.log(`[Payout] Looking for DEFAULT account - shopCode: ${shopCode}`);
+  } else {
+    // Lấy tài khoản ngân hàng cụ thể
+    bankQuery = `SELECT ShopBankID, BankName, AccountNumber, AccountHolder, IsDefault 
+                 FROM Shop_Bank_Accounts 
+                 WHERE ShopBankID = ? AND ShopCode = ?`;
+    bankParams = [shopBankID, shopCode];
+    console.log(`[Payout] Looking for SPECIFIC account - bank_id: ${shopBankID}, shopCode: ${shopCode}`);
+  }
+
+  const [bankRows] = await queryService.query<RowDataPacket[]>(
+    bankQuery,
+    bankParams
+  );
+  
+  console.log(`[Payout] Bank query result:`, {
+    query: bankQuery.substring(0, 50) + '...',
+    params: bankParams,
+    rowCount: bankRows?.length || 0,
+    data: bankRows?.[0] || null
+  });
+
+  if (!bankRows?.[0]) {
+    // Debug: Check what accounts exist for this shop
+    const [allAccounts] = await queryService.query<RowDataPacket[]>(
+      `SELECT ShopBankID, BankName, IsDefault, ShopCode FROM Shop_Bank_Accounts WHERE ShopCode = ?`,
+      [shopCode]
+    );
+    console.log(`[Payout] All bank accounts for shopCode ${shopCode}:`, allAccounts);
+    
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Không tìm thấy tài khoản ngân hàng. Vui lòng chọn hoặc thêm tài khoản."
+    );
+  }
+
+  const bankAccount = bankRows[0];
 
   // Kiểm tra số dư
   const [walletRows] = await queryService.query<RowDataPacket[]>(
@@ -55,8 +125,61 @@ export async function createPayoutRequest(
     [shopCode, shopBankID, amount, note || null]
   );
 
+  const payoutID = result.insertId;
+
+  // ⭐ IMMEDIATELY DEDUCT FROM WALLET (Trừ ngay)
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Shop_Wallets
+     SET Balance = Balance - ?,
+         UpdateAt = NOW()
+     WHERE ShopCode = ?`,
+    [amount, shopCode]
+  );
+
+  // Tạo wallet transaction
+  await queryService.query<ResultSetHeader>(
+    `INSERT INTO Wallet_Transactions (
+      ShopCode,
+      Type,
+      Amount,
+      Note,
+      Status,
+      PayoutID,
+      CreateAt
+    ) VALUES (?, 'debit_payout', ?, 'Yêu cầu rút tiền', 'pending', ?, NOW())`,
+    [shopCode, amount, payoutID]
+  );
+
+  // ⭐ SEND EMAIL TO ADMIN
+  try {
+    const emailContent = `
+<h2>🔔 Yêu Cầu Rút Tiền Mới</h2>
+<p><strong>Shop:</strong> ${shop.ShopName}</p>
+<p><strong>Mã Yêu Cầu:</strong> PAYOUT-${payoutID}</p>
+<p><strong>Số Tiền:</strong> ${amount.toLocaleString("vi-VN")}đ</p>
+<p><strong>Ngân Hàng:</strong> ${bankAccount.BankName}</p>
+<p><strong>Số Tài Khoản:</strong> ${bankAccount.AccountNumber}</p>
+<p><strong>Chủ Tài Khoản:</strong> ${bankAccount.AccountHolder}</p>
+<p><strong>Ghi Chú:</strong> ${note || "N/A"}</p>
+<p><strong>Thời Gian:</strong> ${new Date().toLocaleString("vi-VN")}</p>
+<hr>
+<p>Vui lòng xác nhận và xử lý yêu cầu này trong admin dashboard.</p>
+    `;
+
+    await mailService.sendMail(
+      "kubjmisu1999@gmail.com",
+      `[Yêu Cầu Rút Tiền] ${shop.ShopName} - ${amount.toLocaleString(
+        "vi-VN"
+      )}đ`,
+      emailContent
+    );
+  } catch (e) {
+    console.error("Lỗi gửi email:", e);
+    // Không throw, tiếp tục xử lý
+  }
+
   return {
-    payoutID: result.insertId,
+    payoutID,
     shopCode,
     amount,
     status: "requested",
@@ -69,7 +192,7 @@ export async function createPayoutRequest(
  */
 export async function getPayoutByID(payoutID: number) {
   const [rows] = await queryService.query<RowDataPacket[]>(
-    `SELECT pr.*, s.ShopName, sba.BankName, sba.AccountNumber, sba.AccountHolder
+    `SELECT pr.*, s.ShopName, sba.BankName, sba.AccountNumber, sba.AccountHolder, sba.IsDefault
      FROM Payout_Requests pr
      JOIN Shops s ON pr.ShopCode = s.ShopCode
      JOIN Shop_Bank_Accounts sba ON pr.ShopBankID = sba.ShopBankID
@@ -112,7 +235,10 @@ export async function listPayoutsByShop(
     countQuery += ` AND Status = ?`;
     countParams.push(status);
   }
-  const [countRows] = await queryService.query<RowDataPacket[]>(countQuery, countParams);
+  const [countRows] = await queryService.query<RowDataPacket[]>(
+    countQuery,
+    countParams
+  );
   const total = countRows?.[0]?.total || 0;
 
   return {
@@ -130,7 +256,7 @@ export async function listAllPayouts(
   limit: number = 10,
   offset: number = 0
 ) {
-  let query = `SELECT pr.*, s.ShopName, s.UserID, u.FullName, sba.BankName, sba.AccountNumber
+  let query = `SELECT pr.*, s.ShopName, s.UserID, u.FullName, sba.BankName, sba.AccountNumber, sba.AccountHolder, sba.IsDefault
                FROM Payout_Requests pr
                JOIN Shops s ON pr.ShopCode = s.ShopCode
                JOIN Users u ON s.UserID = u.UserID
@@ -164,7 +290,10 @@ export async function listAllPayouts(
     countQuery += ` AND ShopCode = ?`;
     countParams.push(shopCode);
   }
-  const [countRows] = await queryService.query<RowDataPacket[]>(countQuery, countParams);
+  const [countRows] = await queryService.query<RowDataPacket[]>(
+    countQuery,
+    countParams
+  );
   const total = countRows?.[0]?.total || 0;
 
   return {
@@ -176,17 +305,17 @@ export async function listAllPayouts(
 /**
  * Duyệt rút tiền (admin)
  */
-export async function approvePayoutRequest(
-  payoutID: number,
-  note?: string
-) {
+export async function approvePayoutRequest(payoutID: number, note?: string) {
   const payout = await getPayoutByID(payoutID);
   if (!payout) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payout request");
   }
 
   if (payout.Status !== "requested") {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Chỉ có thể duyệt payout ở trạng thái 'requested'");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Chỉ có thể duyệt payout ở trạng thái 'requested'"
+    );
   }
 
   // Cập nhật payout status
@@ -200,27 +329,14 @@ export async function approvePayoutRequest(
     [payoutID, payoutID]
   );
 
-  // Trừ tiền từ wallet
+  // ⭐ UPDATE wallet transaction status from pending to completed
+  // (Wallet đã bị trừ ngay khi tạo request)
   await queryService.query<ResultSetHeader>(
-    `UPDATE Shop_Wallets
-     SET Balance = Balance - ?,
+    `UPDATE Wallet_Transactions
+     SET Status = 'completed',
          UpdateAt = NOW()
-     WHERE ShopCode = ?`,
-    [payout.Amount, payout.ShopCode]
-  );
-
-  // Tạo wallet transaction
-  await queryService.query<ResultSetHeader>(
-    `INSERT INTO Wallet_Transactions (
-      ShopCode,
-      Type,
-      Amount,
-      Note,
-      Status,
-      PayoutID,
-      CreateAt
-    ) VALUES (?, 'debit_payout', ?, 'Payout approved', 'completed', ?, NOW())`,
-    [payout.ShopCode, payout.Amount, payoutID]
+     WHERE PayoutID = ? AND Type = 'debit_payout'`,
+    [payoutID]
   );
 
   return {
@@ -234,17 +350,17 @@ export async function approvePayoutRequest(
 /**
  * Từ chối rút tiền (admin)
  */
-export async function rejectPayoutRequest(
-  payoutID: number,
-  reason: string
-) {
+export async function rejectPayoutRequest(payoutID: number, reason: string) {
   const payout = await getPayoutByID(payoutID);
   if (!payout) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payout request");
   }
 
   if (payout.Status !== "requested") {
-    throw new ApiError(StatusCodes.BAD_REQUEST, "Chỉ có thể từ chối payout ở trạng thái 'requested'");
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Chỉ có thể từ chối payout ở trạng thái 'requested'"
+    );
   }
 
   // Cập nhật payout status
