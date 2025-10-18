@@ -383,47 +383,6 @@ const paymentController = {
   },
 
   /**
-   * Confirm payment manually (for testing)
-   * POST /api/payments/:paymentID/confirm
-   */
-  async confirmPayment(req: Request, res: Response, next: NextFunction) {
-    try {
-      const { paymentID } = req.params;
-
-      const payment = await paymentService.getPaymentByID(Number(paymentID));
-      if (!payment) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
-        );
-      }
-
-      if (payment.PaymentStatus === "paid") {
-        return next(
-          new ApiError(StatusCodes.BAD_REQUEST, "Payment đã thanh toán")
-        );
-      }
-
-      const result = await paymentService.handlePaymentSuccess(
-        payment.PaymentID
-      );
-
-      return apiResponse.success(
-        res,
-        result,
-        "Xác nhận thanh toán thành công",
-        StatusCodes.OK
-      );
-    } catch (error) {
-      next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi xác nhận thanh toán"
-        )
-      );
-    }
-  },
-
-  /**
    * Lấy kết quả thanh toán (sau khi thanh toán hoàn tất)
    * GET /api/payments/result/:bookingCode
    */

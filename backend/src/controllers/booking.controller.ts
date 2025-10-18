@@ -95,7 +95,15 @@ const bookingController = {
   async createBooking(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user?.UserID;
-      const { fieldCode, playDate, startTime, endTime } = req.body;
+      const {
+        fieldCode,
+        playDate,
+        startTime,
+        endTime,
+        customerName,
+        customerEmail,
+        customerPhone,
+      } = req.body;
 
       if (!fieldCode || !playDate || !startTime || !endTime) {
         return next(
@@ -157,24 +165,21 @@ const bookingController = {
       }
 
       // Calculate total price
-      const pricePerSlot = field.DefaultPricePerHour || 100000; // Default price
-      const totalPrice = pricePerSlot; // 1 slot
-
-      // Generate booking code
-      const bookingCodeResult = await queryService.query<ResultSetHeader>(
-        `SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_NAME='Bookings' AND TABLE_SCHEMA=DATABASE()`,
-        []
-      );
+      const pricePerSlot = field.DefaultPricePerHour || 100000;
+      const totalPrice = pricePerSlot;
 
       // Calculate platform fee (5%)
       const platformFee = Math.round(totalPrice * 0.05);
       const netToShop = totalPrice - platformFee;
 
-      // Create booking
+      // Create booking with customer info
       const [bookingResult] = await queryService.query<ResultSetHeader>(
         `INSERT INTO Bookings (
           FieldCode,
           CustomerUserID,
+          CustomerName,
+          CustomerEmail,
+          CustomerPhone,
           PlayDate,
           StartTime,
           EndTime,
@@ -185,10 +190,13 @@ const bookingController = {
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
           userId,
+          customerName || null,
+          customerEmail || null,
+          customerPhone || null,
           playDate,
           startTime,
           endTime,
@@ -237,15 +245,44 @@ const bookingController = {
       const userId = (req as any).user?.UserID;
       const { bookingCode } = req.params;
 
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
+      // Normalize booking code for INT column
+      let searchBookingCode: number;
+      const bookingCodeNum = Number(bookingCode);
+      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
+        searchBookingCode = bookingCodeNum;
+      } else {
+        const match = String(bookingCode).match(/(\d+)/);
+        if (match) {
+          searchBookingCode = Number(match[1]);
+        } else {
+          return next(
+            new ApiError(
+              StatusCodes.BAD_REQUEST,
+              "BookingCode format không hợp lệ"
+            )
+          );
+        }
+      }
+
+      // Nếu có userId, chỉ lấy booking của user đó; nếu không thì lấy bất kỳ booking nào
+      let query = `SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
                 CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END as paid_amount
          FROM Bookings b
          JOIN Fields f ON b.FieldCode = f.FieldCode
          JOIN Shops s ON f.ShopCode = s.ShopCode
          LEFT JOIN Payments_Admin p ON b.PaymentID = p.PaymentID
-         WHERE b.BookingCode = ? AND b.CustomerUserID = ?`,
-        [bookingCode, userId]
+         WHERE b.BookingCode = ?`;
+
+      const params: any[] = [searchBookingCode];
+
+      if (userId) {
+        query += ` AND b.CustomerUserID = ?`;
+        params.push(userId);
+      }
+
+      const [bookings] = await queryService.query<RowDataPacket[]>(
+        query,
+        params
       );
 
       if (!bookings?.[0]) {
@@ -259,7 +296,7 @@ const bookingController = {
         `SELECT SlotID, PlayDate, StartTime, EndTime, Status 
          FROM Field_Slots 
          WHERE BookingCode = ?`,
-        [bookingCode]
+        [searchBookingCode]
       );
 
       return apiResponse.success(

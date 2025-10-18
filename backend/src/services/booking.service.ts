@@ -148,6 +148,11 @@ const generateTransactionId = () => {
   return `TX-${partA}${partB}`;
 };
 
+const generateCheckinCode = () => {
+  // Generate unique checkin code: 6-8 alphanumeric
+  return Math.random().toString(36).slice(2, 10).toUpperCase();
+};
+
 async function lockSlot(
   connection: PoolConnection,
   fieldCode: number,
@@ -291,6 +296,7 @@ export async function confirmFieldBooking(
       const playDate = normalizedSlots[0].db_date;
       const startTime = normalizedSlots[0].db_start_time;
       const endTime = normalizedSlots[0].db_end_time;
+      const checkinCode = generateCheckinCode();
 
       const [bookingResult] = await connection.query<ResultSetHeader>(
         `INSERT INTO Bookings (
@@ -302,11 +308,12 @@ export async function confirmFieldBooking(
           TotalPrice,
           PlatformFee,
           NetToShop,
+          CheckinCode,
           BookingStatus,
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
           userID,
@@ -316,6 +323,7 @@ export async function confirmFieldBooking(
           totalPrice,
           platformFee,
           netToShop,
+          checkinCode,
         ]
       );
 

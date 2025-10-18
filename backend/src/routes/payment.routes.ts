@@ -12,7 +12,4 @@ router.get("/result/:bookingCode", paymentController.getPaymentResult);
 // Webhook callback from SePay
 router.post("/webhook/sepay", paymentController.sepayCallback);
 
-// Manual confirm (for testing)
-router.post("/:paymentID/confirm", requireAuth, paymentController.confirmPayment);
-
 export default router;
