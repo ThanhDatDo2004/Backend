@@ -236,7 +236,7 @@ function mapSlotRow(slot: FieldSlotRow) {
       status = "available";
     }
   }
-  
+
   return {
     slot_id: slot.slot_id,
     field_code: slot.field_code,
@@ -294,90 +294,106 @@ const fieldService = {
       sortDir: params.sortDir,
     };
 
-    const [rows, total, sportTypesDb, addresses, statusCounts, approvalCounts] =
-      await Promise.all([
+    try {
+      console.log("📋 Fetching fields with filters:", filters);
+
+      // Run main queries first
+      const [rows, total] = await Promise.all([
         fieldModel.list(filters, pagination, sorting),
         fieldModel.count(filters),
-        fieldModel.listSportTypes(filters),
-        fieldModel.listAddresses(filters),
-        fieldModel.countByStatus(filters),
-        fieldModel.countByShopApproval(filters),
       ]);
 
-    const items = await this.hydrateRows(rows);
+      console.log(`✅ Got ${rows.length} rows, total: ${total}`);
 
-    const sportTypes = Array.from(
-      new Set(sportTypesDb.map((s) => mapSportTypeToLabel(s)))
-    ).filter(Boolean);
-    const locations = Array.from(
-      new Set(addresses.map((addr) => normalizeLocation(addr)).filter(Boolean))
-    );
+      // Then run facet queries (less critical)
+      const [sportTypesDb, addresses, statusCounts, approvalCounts] =
+        await Promise.all([
+          fieldModel.listSportTypes(filters).catch(() => []),
+          fieldModel.listAddresses(filters).catch(() => []),
+          fieldModel.countByStatus(filters).catch(() => []),
+          fieldModel.countByShopApproval(filters).catch(() => []),
+        ]);
 
-    const statusFacet = statusCounts.map((item) => {
-      const total = Number(item.total ?? 0);
-      return {
-        value: item.status ?? "unknown",
-        label: mapStatus(item.status ?? undefined),
+      const items = await this.hydrateRows(rows);
+
+      const sportTypes = Array.from(
+        new Set(sportTypesDb.map((s) => mapSportTypeToLabel(s)))
+      ).filter(Boolean);
+      const locations = Array.from(
+        new Set(
+          addresses.map((addr) => normalizeLocation(addr)).filter(Boolean)
+        )
+      );
+
+      const statusFacet = statusCounts.map((item) => {
+        const total = Number(item.total ?? 0);
+        return {
+          value: item.status ?? "unknown",
+          label: mapStatus(item.status ?? undefined),
+          total,
+          count: total,
+        };
+      });
+
+      const shopApprovalFacet = approvalCounts.map((item) => {
+        const total = Number(item.total ?? 0);
+        return {
+          value: item.approval ?? "N",
+          label: mapShopApprovalToLabel(item.approval ?? undefined),
+          total,
+          count: total,
+        };
+      });
+
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+      const paginationMeta = {
         total,
-        count: total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
       };
-    });
 
-    const shopApprovalFacet = approvalCounts.map((item) => {
-      const total = Number(item.total ?? 0);
       return {
-        value: item.approval ?? "N",
-        label: mapShopApprovalToLabel(item.approval ?? undefined),
+        items,
         total,
-        count: total,
+        page,
+        pageSize,
+        totalPages,
+        hasNext: paginationMeta.hasNext,
+        hasPrev: paginationMeta.hasPrev,
+        facets: {
+          sportTypes: sportTypes.sort((a, b) => a.localeCompare(b, "vi")),
+          locations: locations.sort((a, b) => a.localeCompare(b, "vi")),
+          statuses: statusFacet,
+          shopApprovals: shopApprovalFacet,
+        },
+        summary: {
+          totals: {
+            fields: total,
+            available:
+              statusFacet.find((item) => item.value === "active")?.total ?? 0,
+            maintenance:
+              statusFacet.find((item) => item.value === "maintenance")?.total ??
+              0,
+            booked:
+              statusFacet.find((item) => item.value === "inactive")?.total ?? 0,
+          },
+          shops: {
+            approved:
+              shopApprovalFacet.find((item) => item.value === "Y")?.total ?? 0,
+            pending:
+              shopApprovalFacet.find((item) => item.value === "N")?.total ?? 0,
+          },
+        },
+        pagination: paginationMeta,
       };
-    });
-
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-    const paginationMeta = {
-      total,
-      page,
-      pageSize,
-      totalPages,
-      hasNext: page < totalPages,
-      hasPrev: page > 1,
-    };
-
-    return {
-      items,
-      total,
-      page,
-      pageSize,
-      totalPages,
-      hasNext: paginationMeta.hasNext,
-      hasPrev: paginationMeta.hasPrev,
-      facets: {
-        sportTypes: sportTypes.sort((a, b) => a.localeCompare(b, "vi")),
-        locations: locations.sort((a, b) => a.localeCompare(b, "vi")),
-        statuses: statusFacet,
-        shopApprovals: shopApprovalFacet,
-      },
-      summary: {
-        totals: {
-          fields: total,
-          available:
-            statusFacet.find((item) => item.value === "active")?.total ?? 0,
-          maintenance:
-            statusFacet.find((item) => item.value === "maintenance")?.total ??
-            0,
-          booked:
-            statusFacet.find((item) => item.value === "inactive")?.total ?? 0,
-        },
-        shops: {
-          approved:
-            shopApprovalFacet.find((item) => item.value === "Y")?.total ?? 0,
-          pending:
-            shopApprovalFacet.find((item) => item.value === "N")?.total ?? 0,
-        },
-      },
-      pagination: paginationMeta,
-    };
+    } catch (error) {
+      console.error("Error fetching fields:", error);
+      throw error;
+    }
   },
 
   async deleteImages(

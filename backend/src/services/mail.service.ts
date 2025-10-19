@@ -56,7 +56,7 @@ export async function sendBookingConfirmationEmail(
 ) {
   const appName = process.env.APP_NAME || "ThueRe";
   const appUrl = process.env.APP_URL || "http://localhost:5173";
-  
+
   const info = await transporter.sendMail({
     from: `"${appName}" <${process.env.GMAIL_USER}>`,
     to,

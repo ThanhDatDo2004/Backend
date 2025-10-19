@@ -33,6 +33,7 @@ export type FieldRow = {
   address: string | null;
   price_per_hour: number;
   status: string;
+  rent: number;
   average_rating: number | null;
   shop_name: string;
   shop_address: string | null;
@@ -68,6 +69,7 @@ const BASE_SELECT = `
     f.Address AS address,
     f.DefaultPricePerHour AS price_per_hour,
     f.Status AS status,
+    f.Rent AS rent,
     COALESCE(AVG(r.Rating), 0) AS average_rating,
     s.ShopName AS shop_name,
     s.Address AS shop_address,

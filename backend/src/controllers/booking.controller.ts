@@ -693,6 +693,7 @@ const bookingController = {
       const userId = (req as any).user?.UserID;
       const {
         status,
+        search,
         limit = 10,
         offset = 0,
         sort = "CreateAt",
@@ -732,7 +733,7 @@ const bookingController = {
       let query = `SELECT b.BookingCode, b.FieldCode, b.CustomerUserID, 
                           b.BookingStatus, b.PaymentStatus, b.TotalPrice, b.NetToShop,
                           b.CheckinCode, b.CheckinTime, b.CreateAt, b.UpdateAt,
-                          u.FullName as CustomerName, b.CustomerPhone
+                          u.FullName as CustomerName, b.CustomerPhone, f.FieldName
                    FROM Bookings b
                    JOIN Fields f ON b.FieldCode = f.FieldCode
                    LEFT JOIN Users u ON b.CustomerUserID = u.UserID
@@ -742,6 +743,18 @@ const bookingController = {
       if (status) {
         query += ` AND b.BookingStatus = ?`;
         params.push(status);
+      }
+
+      // Add search filter: search by booking code, field name, or customer phone
+      if (search) {
+        const searchTerm = `%${String(search).trim()}%`;
+        query += ` AND (
+          CAST(b.BookingCode AS CHAR) LIKE ?
+          OR f.FieldName LIKE ?
+          OR b.CustomerPhone LIKE ?
+          OR u.FullName LIKE ?
+        )`;
+        params.push(searchTerm, searchTerm, searchTerm, searchTerm);
       }
 
       // Validate sort field
@@ -794,14 +807,25 @@ const bookingController = {
         })
       );
 
-      // Get total
+      // Get total - must include search filter
       let countQuery = `SELECT COUNT(*) as total FROM Bookings b
                         JOIN Fields f ON b.FieldCode = f.FieldCode
+                        LEFT JOIN Users u ON b.CustomerUserID = u.UserID
                         WHERE f.ShopCode = ?`;
       const countParams: any[] = [shopCode];
       if (status) {
         countQuery += ` AND b.BookingStatus = ?`;
         countParams.push(status);
+      }
+      if (search) {
+        const searchTerm = `%${String(search).trim()}%`;
+        countQuery += ` AND (
+          CAST(b.BookingCode AS CHAR) LIKE ?
+          OR f.FieldName LIKE ?
+          OR b.CustomerPhone LIKE ?
+          OR u.FullName LIKE ?
+        )`;
+        countParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
       }
       const [countRows] = await queryService.query<RowDataPacket[]>(
         countQuery,
@@ -826,6 +850,132 @@ const bookingController = {
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
           (error as Error)?.message || "Lỗi lấy danh sách booking"
+        )
+      );
+    }
+  },
+
+  /**
+   * Confirm a booking - also increment field Rent
+   * PUT /api/bookings/:bookingCode/confirm
+   */
+  async confirmBooking(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { bookingCode } = req.params;
+
+      // Get booking details
+      const [bookings] = await queryService.query<RowDataPacket[]>(
+        `SELECT * FROM Bookings WHERE BookingCode = ?`,
+        [bookingCode]
+      );
+
+      if (!bookings?.[0]) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Booking không tồn tại")
+        );
+      }
+
+      const booking = bookings[0];
+
+      // Check if already confirmed
+      if (booking.BookingStatus === "confirmed") {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Booking đã được xác nhận")
+        );
+      }
+
+      // Update booking status to confirmed
+      await queryService.query(
+        `UPDATE Bookings
+         SET BookingStatus = 'confirmed', UpdateAt = NOW()
+         WHERE BookingCode = ?`,
+        [bookingCode]
+      );
+
+      // ✅ INCREMENT RENT for the field
+      await queryService.query(
+        `UPDATE Fields
+         SET Rent = Rent + 1
+         WHERE FieldCode = ?`,
+        [booking.FieldCode]
+      );
+
+      console.log(
+        `[BOOKING] Booking ${bookingCode} confirmed - Field ${booking.FieldCode} rent increased`
+      );
+
+      return apiResponse.success(
+        res,
+        { BookingCode: bookingCode, FieldCode: booking.FieldCode },
+        "Booking xác nhận thành công",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Confirm booking failed"
+        )
+      );
+    }
+  },
+
+  /**
+   * Cancel a booking - also decrement field Rent if it was confirmed
+   * PUT /api/bookings/:bookingCode/cancel
+   */
+  async cancelBookingMethod(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { bookingCode } = req.params;
+
+      // Get booking to check current status
+      const [bookings] = await queryService.query<RowDataPacket[]>(
+        `SELECT * FROM Bookings WHERE BookingCode = ?`,
+        [bookingCode]
+      );
+
+      if (!bookings?.[0]) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Booking không tồn tại")
+        );
+      }
+
+      const booking = bookings[0];
+      const wasConfirmed = booking.BookingStatus === "confirmed";
+
+      // Update booking status to cancelled
+      await queryService.query(
+        `UPDATE Bookings
+         SET BookingStatus = 'cancelled', UpdateAt = NOW()
+         WHERE BookingCode = ?`,
+        [bookingCode]
+      );
+
+      // ✅ DECREMENT RENT if it was confirmed
+      if (wasConfirmed) {
+        await queryService.query(
+          `UPDATE Fields
+           SET Rent = GREATEST(Rent - 1, 0)
+           WHERE FieldCode = ?`,
+          [booking.FieldCode]
+        );
+
+        console.log(
+          `[BOOKING] Booking ${bookingCode} cancelled - Field ${booking.FieldCode} rent decreased`
+        );
+      }
+
+      return apiResponse.success(
+        res,
+        { BookingCode: bookingCode, FieldCode: booking.FieldCode },
+        "Booking hủy thành công",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Cancel booking failed"
         )
       );
     }

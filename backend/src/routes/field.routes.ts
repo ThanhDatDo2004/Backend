@@ -14,7 +14,24 @@ router.post("/:fieldCode/bookings/confirm", fieldController.confirmBooking);
 router.get("/:fieldCode", fieldController.detail);
 
 // Field images endpoints
-router.post("/:fieldCode/images", requireAuth, fieldImagesUpload, fieldController.uploadImages);
+router.post(
+  "/:fieldCode/images",
+  requireAuth,
+  fieldImagesUpload,
+  fieldController.uploadImages
+);
+
+// Field stats and rent
+router.get("/:fieldCode/stats", fieldController.getFieldStats);
+router.get("/shop/:shopCode/with-rent", fieldController.listFieldsWithRent);
+
+// Sync rent (fix mismatches from old data)
+router.put("/:fieldCode/sync-rent", fieldController.syncFieldRent);
+router.put("/sync/all", fieldController.syncAllFieldsRent);
+
+// Booking confirm/cancel with rent tracking
+router.put("/:bookingCode/confirm", bookingController.confirmBooking);
+router.put("/:bookingCode/cancel", bookingController.cancelBookingMethod);
 
 // Booking endpoints
 router.get("/bookings", requireAuth, bookingController.listBookings);

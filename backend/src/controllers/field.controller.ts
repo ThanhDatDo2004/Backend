@@ -206,7 +206,12 @@ const fieldController = {
       }
 
       if (uploadedImages.length === 0) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân hoặc không thể tải ảnh"));
+        return next(
+          new ApiError(
+            StatusCodes.NOT_FOUND,
+            "Không tìm thấy sân hoặc không thể tải ảnh"
+          )
+        );
       }
 
       return apiResponse.success(
@@ -253,7 +258,7 @@ const fieldController = {
           [fieldCode]
         );
       } catch (e) {
-        console.error('Lỗi release expired held slots:', e);
+        console.error("Lỗi release expired held slots:", e);
         // Không throw, tiếp tục xử lý
       }
 
@@ -310,7 +315,9 @@ const fieldController = {
           transaction_id: result.transaction_id,
           payment_status: result.payment_status,
           payment_method:
-            typeof payment_method === "string" ? payment_method : "bank_transfer",
+            typeof payment_method === "string"
+              ? payment_method
+              : "bank_transfer",
           slots: result.slots,
         },
         "Tạo booking thành công. Mã QR SePay đã sẵn sàng.",
@@ -318,6 +325,244 @@ const fieldController = {
       );
     } catch (error) {
       next(error);
+    }
+  },
+
+  /**
+   * Get field statistics including booking count
+   * GET /api/fields/:fieldCode/stats
+   */
+  async getFieldStats(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { fieldCode } = req.params;
+
+      const query = `
+        SELECT
+          f.FieldCode,
+          f.FieldName,
+          f.Rent,
+          f.Rent as booking_count,
+          f.Status,
+          f.DefaultPricePerHour,
+          f.SportType,
+          s.ShopName,
+          (SELECT COUNT(*) FROM Bookings
+           WHERE FieldCode = f.FieldCode
+           AND BookingStatus = 'confirmed') as confirmed_count,
+          (SELECT COUNT(*) FROM Bookings
+           WHERE FieldCode = f.FieldCode) as total_bookings
+        FROM Fields f
+        JOIN Shops s ON f.ShopCode = s.ShopCode
+        WHERE f.FieldCode = ?
+      `;
+
+      const [results] = await queryService.query<RowDataPacket[]>(query, [
+        fieldCode,
+      ]);
+
+      if (!results?.[0]) {
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại"));
+      }
+
+      return apiResponse.success(
+        res,
+        results[0],
+        "Thống kê sân",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Get field stats failed"
+        )
+      );
+    }
+  },
+
+  /**
+   * List fields with booking count for a shop
+   * GET /api/fields/shop/:shopCode/with-rent
+   */
+  async listFieldsWithRent(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { shopCode } = req.params;
+      const { limit = "10", offset = "0" } = req.query;
+
+      const validLimit = Math.min(Math.max(1, Number(limit)), 100);
+      const validOffset = Math.max(0, Number(offset));
+
+      const query = `
+        SELECT
+          f.FieldCode,
+          f.FieldName,
+          f.Rent,
+          f.Rent as booking_count,
+          f.Status,
+          f.DefaultPricePerHour,
+          f.SportType,
+          s.ShopName
+        FROM Fields f
+        JOIN Shops s ON f.ShopCode = s.ShopCode
+        WHERE f.ShopCode = ?
+        ORDER BY f.Rent DESC
+        LIMIT ? OFFSET ?
+      `;
+
+      const [fields] = await queryService.query<RowDataPacket[]>(query, [
+        shopCode,
+        validLimit,
+        validOffset,
+      ]);
+
+      // Get total count
+      const [totalResult] = await queryService.query<RowDataPacket[]>(
+        `SELECT COUNT(*) as total FROM Fields WHERE ShopCode = ?`,
+        [shopCode]
+      );
+
+      return apiResponse.success(
+        res,
+        {
+          data: fields,
+          pagination: {
+            limit: validLimit,
+            offset: validOffset,
+            total: totalResult?.[0]?.total || 0,
+          },
+        },
+        "Danh sách sân với thống kê",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "List fields failed"
+        )
+      );
+    }
+  },
+
+  /**
+   * Sync/Fix field rent count from confirmed bookings
+   * PUT /api/fields/:fieldCode/sync-rent
+   * Admin endpoint to fix mismatched rent counts
+   */
+  async syncFieldRent(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { fieldCode } = req.params;
+
+      // Calculate actual rent count from confirmed bookings
+      const query = `
+        SELECT COUNT(*) as rent_count
+        FROM Bookings
+        WHERE FieldCode = ?
+          AND BookingStatus = 'confirmed'
+      `;
+
+      const [results] = await queryService.query<RowDataPacket[]>(query, [
+        fieldCode,
+      ]);
+
+      const actualRent = results?.[0]?.rent_count || 0;
+
+      // Update field rent to match actual count
+      const updateQuery = `
+        UPDATE Fields
+        SET Rent = ?
+        WHERE FieldCode = ?
+      `;
+
+      await queryService.query(updateQuery, [actualRent, fieldCode]);
+
+      console.log(
+        `[FIELD] Synced Field ${fieldCode} rent to ${actualRent} confirmed bookings`
+      );
+
+      return apiResponse.success(
+        res,
+        { FieldCode: fieldCode, Rent: actualRent },
+        `Rent synced to ${actualRent}`,
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Sync field rent failed"
+        )
+      );
+    }
+  },
+
+  /**
+   * Sync all fields rent count (admin/maintenance endpoint)
+   * PUT /api/fields/sync/all
+   */
+  async syncAllFieldsRent(req: Request, res: Response, next: NextFunction) {
+    try {
+      // Get all fields
+      const getAllFields = `SELECT FieldCode FROM Fields`;
+      const [fields] = await queryService.query<RowDataPacket[]>(
+        getAllFields,
+        []
+      );
+
+      if (!fields || fields.length === 0) {
+        return apiResponse.success(
+          res,
+          { synced: 0 },
+          "No fields to sync",
+          StatusCodes.OK
+        );
+      }
+
+      let syncedCount = 0;
+
+      // Sync each field
+      for (const field of fields) {
+        const fieldCode = field.FieldCode;
+
+        const countQuery = `
+          SELECT COUNT(*) as rent_count
+          FROM Bookings
+          WHERE FieldCode = ?
+            AND BookingStatus = 'confirmed'
+        `;
+
+        const [results] = await queryService.query<RowDataPacket[]>(
+          countQuery,
+          [fieldCode]
+        );
+
+        const actualRent = results?.[0]?.rent_count || 0;
+
+        const updateQuery = `
+          UPDATE Fields
+          SET Rent = ?
+          WHERE FieldCode = ?
+        `;
+
+        await queryService.query(updateQuery, [actualRent, fieldCode]);
+        syncedCount++;
+      }
+
+      console.log(`[FIELD] Synced ${syncedCount} fields rent counts`);
+
+      return apiResponse.success(
+        res,
+        { synced: syncedCount },
+        `Synced ${syncedCount} fields`,
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Sync all fields rent failed"
+        )
+      );
     }
   },
 };

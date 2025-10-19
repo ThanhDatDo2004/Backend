@@ -127,7 +127,7 @@ const authController = {
       });
     }
 
-    // Không cho gửi mã nếu email đã tồn tại (đăng ký mới)
+    // Không cho gửi mã nếu email đã tồn tại trong database (đăng ký mới)
     const existed = await authModel.findByEmailOrUserId(email, "");
     if (existed) {
       return res.status(StatusCodes.CONFLICT).json({
@@ -137,13 +137,23 @@ const authController = {
       });
     }
 
+    // Cho phép gửi lại mã: nếu đã có mã cũ, xóa nó đi (reset flow)
+    if (otpStore.has(email)) {
+      otpStore.delete(email);
+    }
+
     const code = genOTP(6);
     otpStore.set(email, { code, expiresAt: Date.now() + OTP_TTL_MS });
 
     try {
       await sendVerificationEmail(email, code);
-      return res.json({ success: true, message: "Đã gửi mã xác minh" });
+      return res.status(StatusCodes.OK).json({
+        success: true,
+        message: "Đã gửi mã xác minh",
+      });
     } catch (e: any) {
+      // Xóa OTP nếu gửi email thất bại
+      otpStore.delete(email);
       return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
         success: false,
         message: e?.message || "Không gửi được mã",

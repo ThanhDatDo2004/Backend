@@ -5,7 +5,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "node --import=tsx --env-file=.env src/index.ts",
     "bulid": "tsx src/index.ts",
     "dev": "node --import=tsx --env-file=.env --watch src/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"

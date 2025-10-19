@@ -2,12 +2,33 @@ import compression from "compression";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
+
+// Load .env manually at startup
+const envPath = path.resolve(process.cwd(), ".env");
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, "utf-8");
+  envContent.split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const [key, ...valueParts] = trimmed.split("=");
+      const value = valueParts.join("=").replace(/^['"]|['"]$/g, "");
+      if (key) {
+        process.env[key.trim()] = value.trim();
+      }
+    }
+  });
+  console.log("✅ .env file loaded");
+} else {
+  console.warn("⚠️  .env file not found at:", envPath);
+}
 
 import helmet from "helmet";
 import express, { NextFunction, Request, Response } from "express";
 import ApiError from "./utils/apiErrors";
 import { errorHandlingMiddleware } from "./middlewares/errorMiddlewares";
 import morgan from "morgan";
+import pool from "./configs/db.config";
 const app = express();
 const allowedOrigins = ["http://localhost:5173"];
 // sau này deploy thì thêm "https://ten-mien-cua-ban.com"
@@ -67,8 +88,47 @@ app.use(
 );
 
 // Health check endpoint
-app.get("/api/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date() });
+app.get("/api/health", async (req, res) => {
+  try {
+    console.log("🔍 Health check started...");
+    console.log("Config:", {
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+    });
+
+    const conn = await pool.getConnection();
+    console.log("✅ Got connection from pool");
+
+    await conn.ping();
+    console.log("✅ Ping successful");
+
+    conn.release();
+    console.log("✅ Connection released");
+
+    return res.status(200).json({
+      success: true,
+      message: "✅ Database connected",
+      database: process.env.DB_NAME,
+      host: process.env.DB_HOST,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("❌ Health check error:", error);
+    return res.status(503).json({
+      success: false,
+      message: "❌ Database connection failed",
+      error: (error as Error).message,
+      hint: "Check if VPS is accessible and database exists",
+      config: {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        database: process.env.DB_NAME,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Setup cleanup job for expired held slots
