@@ -218,14 +218,15 @@ const bookingController = {
           await queryService.query<ResultSetHeader>(
             `INSERT INTO Field_Slots (
               FieldCode,
+              QuantityID,
               PlayDate,
               StartTime,
               EndTime,
               Status,
               CreateAt,
               UpdateAt
-            ) VALUES (?, ?, ?, ?, 'available', NOW(), NOW())`,
-            [fieldCode, playDate, startTime, endTime]
+            ) VALUES (?, ?, ?, ?, ?, 'available', NOW(), NOW())`,
+            [fieldCode, quantityID, playDate, startTime, endTime]
           );
         } catch (err: any) {
           // Nếu duplicate key (slot đã tồn tại), update status về available
@@ -259,9 +260,6 @@ const bookingController = {
           CustomerName,
           CustomerEmail,
           CustomerPhone,
-          PlayDate,
-          StartTime,
-          EndTime,
           TotalPrice,
           PlatformFee,
           NetToShop,
@@ -269,17 +267,14 @@ const bookingController = {
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
-          quantityID || null,
+          quantityID,
           userId,
           customerName || null,
           customerEmail || null,
           customerPhone || null,
-          playDate,
-          startTime,
-          endTime,
           totalPrice,
           platformFee,
           netToShop,

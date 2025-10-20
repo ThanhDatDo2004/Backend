@@ -582,13 +582,17 @@ const fieldService = {
     return items[0] ?? null;
   },
 
-  async getAvailability(fieldCode: number, playDate?: string) {
+  async getAvailability(
+    fieldCode: number,
+    playDate?: string,
+    quantityId?: number
+  ) {
     const pricingPromise: Promise<FieldPricingRow[]> = playDate
       ? fieldModel.listPricing(fieldCode)
       : Promise.resolve([]);
 
     const [slots, pricing] = await Promise.all([
-      fieldModel.listSlots(fieldCode, playDate),
+      fieldModel.listSlots(fieldCode, playDate, quantityId),
       pricingPromise,
     ]);
 

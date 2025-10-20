@@ -284,8 +284,14 @@ const fieldController = {
         );
       }
 
-      const { slots, customer, payment_method, total_price, notes } =
-        req.body ?? {};
+      const {
+        slots,
+        customer,
+        payment_method,
+        total_price,
+        notes,
+        quantity_id,
+      } = req.body ?? {};
 
       if (!Array.isArray(slots) || !slots.length) {
         return next(
@@ -296,14 +302,25 @@ const fieldController = {
         );
       }
 
-      const result = await bookingService.confirmFieldBooking(fieldCode, {
-        slots,
-        customer: typeof customer === "object" ? customer : undefined,
-        payment_method:
-          typeof payment_method === "string" ? payment_method : undefined,
-        total_price: typeof total_price === "number" ? total_price : undefined,
-        notes: typeof notes === "string" ? notes : undefined,
-      });
+      // NEW: Extract quantityId and convert to number if provided
+      const quantityId =
+        quantity_id !== undefined && quantity_id !== null
+          ? Number(quantity_id)
+          : undefined;
+
+      const result = await bookingService.confirmFieldBooking(
+        fieldCode,
+        {
+          slots,
+          customer: typeof customer === "object" ? customer : undefined,
+          payment_method:
+            typeof payment_method === "string" ? payment_method : undefined,
+          total_price:
+            typeof total_price === "number" ? total_price : undefined,
+          notes: typeof notes === "string" ? notes : undefined,
+        },
+        quantityId // NEW: Pass quantityId
+      );
 
       return apiResponse.success(
         res,

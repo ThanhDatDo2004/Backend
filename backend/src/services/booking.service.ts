@@ -215,12 +215,14 @@ async function insertNewSlot(
   connection: PoolConnection,
   fieldCode: number,
   slot: NormalizedSlot,
+  quantityId?: number | null,
   createdBy?: number | null
 ): Promise<number> {
   const [result] = await connection.query<ResultSetHeader>(
     `
       INSERT INTO Field_Slots (
         FieldCode,
+        QuantityID,
         PlayDate,
         StartTime,
         EndTime,
@@ -228,11 +230,11 @@ async function insertNewSlot(
         HoldExpiresAt,
         CreatedBy
       )
-      VALUES (?, ?, ?, ?, 'available', NULL, ?)
+      VALUES (?, ?, ?, ?, ?, 'available', NULL, ?)
       ON DUPLICATE KEY UPDATE
         SlotID = LAST_INSERT_ID(SlotID)
     `,
-    [fieldCode, slot.db_date, slot.db_start_time, slot.db_end_time, createdBy]
+    [fieldCode, quantityId || null, slot.db_date, slot.db_start_time, slot.db_end_time, createdBy]
   );
 
   return Number(result.insertId);
@@ -261,7 +263,8 @@ async function releaseExpiredHeldSlots(fieldCode: number) {
 
 export async function confirmFieldBooking(
   fieldCode: number,
-  payload: ConfirmBookingPayload
+  payload: ConfirmBookingPayload,
+  quantityId?: number | null
 ): Promise<ConfirmBookingResult> {
   if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
     throw new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ.");
@@ -312,6 +315,7 @@ export async function confirmFieldBooking(
             connection,
             fieldCode,
             slot,
+            quantityId ?? null,
             payload.created_by ?? null
           );
           updatedSlots.push({
@@ -337,6 +341,7 @@ export async function confirmFieldBooking(
       const [bookingResult] = await connection.query<ResultSetHeader>(
         `INSERT INTO Bookings (
           FieldCode,
+          QuantityID,
           CustomerUserID,
           CustomerName,
           CustomerEmail,
@@ -349,9 +354,10 @@ export async function confirmFieldBooking(
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
+          quantityId ?? null,
           userID,
           payload.customer?.name || null,
           payload.customer?.email || null,

@@ -44,6 +44,7 @@ export type FieldRow = {
 export type FieldSlotRow = {
   slot_id: number;
   field_code: number;
+  quantity_id?: number | null;
   play_date: string;
   start_time: string;
   end_time: string;
@@ -309,17 +310,23 @@ const fieldModel = {
     return await queryService.execQueryList(query, [fieldCodes]);
   },
 
-  async listSlots(fieldCode: number, playDate?: string) {
+  async listSlots(fieldCode: number, playDate?: string, quantityId?: number) {
     const params: any[] = [fieldCode];
     let clause = "WHERE FieldCode = ?";
     if (playDate) {
       clause += " AND PlayDate = ?";
       params.push(playDate);
     }
+    // NEW: Filter by QuantityID if provided
+    if (quantityId !== undefined && quantityId !== null) {
+      clause += " AND (QuantityID = ? OR QuantityID IS NULL)";
+      params.push(quantityId);
+    }
     const query = `
       SELECT
         SlotID AS slot_id,
         FieldCode AS field_code,
+        QuantityID AS quantity_id,
         DATE_FORMAT(PlayDate, '%Y-%m-%d') AS play_date,
         DATE_FORMAT(StartTime, '%H:%i') AS start_time,
         DATE_FORMAT(EndTime, '%H:%i') AS end_time,
