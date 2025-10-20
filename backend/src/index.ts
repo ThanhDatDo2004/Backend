@@ -59,6 +59,7 @@ const PORT = process.env.PORT || 5050;
 
 import authRouter from "./routes/auth.routes";
 import fieldRouter from "./routes/field.routes";
+import fieldQuantityRouter from "./routes/fieldQuantity.routes";
 import shopRouter from "./routes/shop.routes";
 import adminRouter from "./routes/admin.routes";
 import paymentRouter from "./routes/payment.routes";
@@ -72,6 +73,7 @@ const uploadsDir = path.resolve(__dirname, "../uploads");
 
 app.use("/api/auth", authRouter);
 app.use("/api/fields", fieldRouter);
+app.use("/api/fields", fieldQuantityRouter);
 app.use("/api/shops", shopRouter);
 app.use("/api/bookings", bookingRouter);
 app.use("/api/admin", adminRouter);

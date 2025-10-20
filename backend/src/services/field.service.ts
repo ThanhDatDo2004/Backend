@@ -12,6 +12,7 @@ import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import localUploadService from "./localUpload.service";
+import fieldQuantityService from "./fieldQuantity.service";
 import url from "url";
 import path from "path";
 
@@ -485,9 +486,27 @@ const fieldService = {
       return null;
     }
 
-    // If there are future bookings, block hard delete and soft delete with 409
+    // DELETION POLICY:
+    // ✅ CÓ THỂ XÓA SÂN NẾU:
+    //    - Không có booking nào, hoặc
+    //    - Tất cả bookings đều QUA HẠN (PlayDate < today hoặc EndTime < current_time)
+    //
+    // ❌ KHÔNG THỂ XÓA NẾU:
+    //    - Có booking "trong tương lai" (FUTURE booking):
+    //      * PlayDate > today, hoặc
+    //      * PlayDate = today nhưng EndTime > current_time
+    //      * Status = 'booked' hoặc 'held'
+    //
+    // Khi xóa sân (nếu được phép):
+    // 1. Xóa tất cả Field_Images (images + storage)
+    // 2. Xóa tất cả Field_Pricing (pricing schedules)
+    // 3. Xóa TẤT CẢ Bookings (bao gồm past + present + cancelled)
+    // 4. Xóa Field
+
+    // Check: Có future bookings không?
     const hasFuture = await fieldModel.hasFutureBookings(fieldCode);
     if (hasFuture) {
+      // ❌ CÓ FUTURE BOOKINGS → BLOCK DELETION
       const err = new ApiError(
         StatusCodes.CONFLICT,
         "Sân có đơn đặt trong tương lai, không thể xóa."
@@ -496,12 +515,14 @@ const fieldService = {
       throw err;
     }
 
+    // ✅ KHÔNG CÓ FUTURE BOOKINGS → CÓ THỂ XÓA
     if (mode === "soft") {
+      // Soft delete: chỉ cập nhật status, không xóa booking
       const ok = await fieldModel.softDeleteField(fieldCode);
       return ok ? { deleted: true } : null;
     }
 
-    // hard delete: remove images from storage, delete image rows, then delete field
+    // Hard delete: remove images from storage, delete image rows, then delete field
     const images = await fieldModel.listAllImagesForField(fieldCode);
     const deletions: Promise<unknown>[] = [];
     for (const img of images as Array<{ image_url: string }>) {
@@ -534,7 +555,19 @@ const fieldService = {
     }
     await Promise.allSettled(deletions);
 
+    // DELETION SEQUENCE (respecting FK constraints):
+    // Step 1: Delete images from database (Field_Images → Fields)
     await fieldModel.deleteAllImagesForField(fieldCode);
+
+    // Step 2: Delete pricing from database (Field_Pricing → Fields)
+    await fieldModel.deleteAllPricingForField(fieldCode);
+
+    // Step 3: Delete bookings from database (Bookings → Fields)
+    // Note: This deletes ALL bookings (past, present, cancelled, completed, etc.)
+    //       because they have already been checked to be non-future
+    await fieldModel.deleteAllBookingsForField(fieldCode);
+
+    // Step 4: Delete field itself (all FK constraints now resolved)
     const ok = await fieldModel.hardDeleteField(fieldCode);
     return ok ? { deleted: true } : null;
   },
@@ -649,6 +682,7 @@ const fieldService = {
       address?: string | null;
       pricePerHour: number;
       status?: FieldStatusDb | string;
+      quantityCount?: number;
     },
     files: Express.Multer.File[] = []
   ) {
@@ -685,6 +719,21 @@ const fieldService = {
       (error as any).code = "INVALID_PRICE";
       throw error;
     }
+
+    // Validate quantityCount
+    const quantityCount = Math.max(1, Number(payload.quantityCount) || 1);
+    if (!Number.isFinite(quantityCount) || quantityCount <= 0) {
+      const error = new Error("INVALID_QUANTITY_COUNT");
+      (error as any).code = "INVALID_QUANTITY_COUNT";
+      throw error;
+    }
+
+    console.log("[FIELD.SERVICE] Creating field with quantityCount:", {
+      received: payload.quantityCount,
+      parsed: Number(payload.quantityCount),
+      final: quantityCount,
+      type: typeof payload.quantityCount,
+    });
 
     const uploadedObjects: Array<{ bucket: string; key: string }> = [];
     const localStored: Array<{ absolutePath: string; publicUrl: string }> = [];
@@ -750,6 +799,18 @@ const fieldService = {
           return newFieldCode;
         }
       );
+
+      // AUTO-CREATE FIELD QUANTITIES
+      // After field is created, create individual court quantities
+      try {
+        await fieldQuantityService.createQuantitiesForField(
+          fieldCode,
+          quantityCount
+        );
+      } catch (quantityError) {
+        console.error("[FIELD] Error creating quantities:", quantityError);
+        // Continue even if quantity creation fails (non-critical)
+      }
 
       return await this.getById(fieldCode);
     } catch (error) {
@@ -850,9 +911,10 @@ const fieldService = {
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {
     if (!rows.length) return [];
     const fieldCodes = rows.map((row) => row.field_code);
-    const [images, reviews] = await Promise.all([
+    const [images, reviews, quantities] = await Promise.all([
       fieldModel.listImages(fieldCodes),
       fieldModel.listReviews(fieldCodes),
+      fieldQuantityService.getMultipleFieldQuantities(fieldCodes),
     ]);
 
     const imagesByField = new Map<number, any[]>();
@@ -882,6 +944,17 @@ const fieldService = {
       reviewsByField.set(rev.field_code, entry);
     });
 
+    const quantitiesByField = new Map<number, any[]>();
+    quantities.forEach((qty: any) => {
+      const entry = quantitiesByField.get(qty.field_code) ?? [];
+      entry.push({
+        quantity_id: qty.quantity_id,
+        quantity_number: qty.quantity_number,
+        status: qty.status,
+      });
+      quantitiesByField.set(qty.field_code, entry);
+    });
+
     return rows.map((row) => ({
       field_code: row.field_code,
       shop_code: row.shop_code,
@@ -902,6 +975,7 @@ const fieldService = {
       },
       reviews: reviewsByField.get(row.field_code) ?? [],
       averageRating: Number(row.average_rating ?? 0),
+      quantities: quantitiesByField.get(row.field_code) ?? [],
     }));
   },
 };

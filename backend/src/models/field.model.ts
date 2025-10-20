@@ -333,6 +333,12 @@ const fieldModel = {
   },
 
   async hasFutureBookings(fieldCode: number) {
+    // Check if field has ANY FUTURE BOOKINGS (FUTURE = bookings that haven't finished yet)
+    // Future = PlayDate > today OR (PlayDate = today AND EndTime > current_time)
+    // Only counts 'booked' or 'held' slots (not cancelled/completed)
+    //
+    // If this returns true → BLOCK field deletion (409 Conflict)
+    // If this returns false → CAN DELETE field (including all past bookings)
     const query = `
       SELECT COUNT(*) AS cnt
       FROM Field_Slots
@@ -348,6 +354,8 @@ const fieldModel = {
   },
 
   async deleteAllImagesForField(fieldCode: number) {
+    // Step 1 of deletion: Remove all image records from database
+    // Note: Physical files (S3/local) are deleted before calling this method
     const query = `
       DELETE FROM Field_Images WHERE FieldCode = ?
     `;
@@ -371,6 +379,11 @@ const fieldModel = {
   },
 
   async hardDeleteField(fieldCode: number) {
+    // Step 4 (final) of deletion: Delete the field record itself
+    // Only reaches here if all FK constraints are resolved:
+    // - All Field_Images deleted
+    // - All Field_Pricing deleted
+    // - All Bookings deleted
     const query = `
       DELETE FROM Fields WHERE FieldCode = ?
     `;
@@ -383,7 +396,53 @@ const fieldModel = {
     );
   },
 
+  async deleteAllPricingForField(fieldCode: number) {
+    // Step 2 of deletion: Delete all pricing schedules for this field
+    // Removes Field_Pricing records (FK to Fields)
+    const query = `
+      DELETE FROM Field_Pricing WHERE FieldCode = ?
+    `;
+    const result = await queryService.execQuery(query, [fieldCode]);
+    if (typeof result === "boolean") return result ? 1 : 0;
+    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+  },
+
+  async hasAnyBookings(fieldCode: number) {
+    // Check if field has ANY bookings (regardless of date/status)
+    // Currently not used in deletion (we only check future bookings)
+    // But useful for other purposes (e.g., preventing field modification)
+    const query = `
+      SELECT COUNT(*) AS cnt
+      FROM Bookings
+      WHERE FieldCode = ?
+    `;
+    const rows = await queryService.execQueryList(query, [fieldCode]);
+    return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0) > 0;
+  },
+
+  async deleteAllBookingsForField(fieldCode: number) {
+    // Step 3 of deletion: Delete ALL bookings (past, present, cancelled, completed, etc.)
+    // This is ONLY called after confirming there are NO FUTURE bookings
+    //
+    // POLICY:
+    // ✅ CAN DELETE sân if: No bookings OR all bookings are PAST (qua hạn)
+    // ❌ CANNOT DELETE sân if: Any booking is FUTURE (chưa qua hạn) → 409 error
+    //
+    // When deleting, we remove ALL bookings because:
+    // - Future bookings: Already checked and blocked
+    // - Past bookings: Can be safely deleted with field
+    // - Cancelled/Completed: Safe to delete
+    const query = `
+      DELETE FROM Bookings WHERE FieldCode = ?
+    `;
+    const result = await queryService.execQuery(query, [fieldCode]);
+    if (typeof result === "boolean") return result ? 1 : 0;
+    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+  },
+
   async softDeleteField(fieldCode: number) {
+    // Soft delete: Mark field as 'inactive' without removing records
+    // Used when you want to keep booking history but hide the field
     const query = `
       UPDATE Fields SET Status = 'inactive' WHERE FieldCode = ?
     `;

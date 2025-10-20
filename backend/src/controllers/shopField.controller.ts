@@ -22,6 +22,12 @@ const createShopFieldSchema = z.object({
     .number()
     .nonnegative("Giá thuê mỗi giờ phải lớn hơn hoặc bằng 0"),
   status: z.enum(["active", "maintenance", "inactive"]).optional(),
+  quantity_count: z.coerce
+    .number()
+    .int()
+    .positive("Số lượng sân phải lớn hơn 0")
+    .optional()
+    .default(1),
 });
 
 // Schema riêng cho việc cập nhật, cho phép các trường là tùy chọn
@@ -163,6 +169,7 @@ const shopFieldController = {
           address: parsed.data.address,
           pricePerHour: parsed.data.price_per_hour,
           status: parsed.data.status,
+          quantityCount: parsed.data.quantity_count,
         },
         files
       );
@@ -340,10 +347,13 @@ const shopFieldController = {
         );
       }
 
-      const field = await fieldService.getFieldDetail(fieldCode);
+      const field = await fieldService.getById(fieldCode);
       if (!field || field.shop_code !== shop.shop_code) {
         return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại hoặc không thuộc quản lý của bạn")
+          new ApiError(
+            StatusCodes.NOT_FOUND,
+            "Sân không tồn tại hoặc không thuộc quản lý của bạn"
+          )
         );
       }
 

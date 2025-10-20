@@ -127,6 +127,7 @@ const bookingController = {
       const userId = (req as any).user?.UserID;
       const {
         fieldCode,
+        quantityID,
         playDate,
         startTime,
         endTime,
@@ -155,6 +156,53 @@ const bookingController = {
       }
 
       const field = fields[0];
+
+      // ✅ NEW: If quantityID provided, validate it's available
+      if (quantityID) {
+        // Check if quantity exists and belongs to this field
+        const [quantities] = await queryService.query<RowDataPacket[]>(
+          `SELECT * FROM Field_Quantity WHERE QuantityID = ? AND FieldCode = ?`,
+          [quantityID, fieldCode]
+        );
+
+        if (!quantities?.[0]) {
+          return next(
+            new ApiError(
+              StatusCodes.NOT_FOUND,
+              "Sân không tồn tại hoặc không thuộc sân loại này"
+            )
+          );
+        }
+
+        const quantity = quantities[0];
+
+        // Check if quantity status is available
+        if (quantity.Status !== "available") {
+          return next(
+            new ApiError(
+              StatusCodes.CONFLICT,
+              `Sân ${quantity.QuantityNumber} không khả dụng (${quantity.Status})`
+            )
+          );
+        }
+
+        // Check if this specific quantity is already booked for this time slot
+        const [bookedQuantities] = await queryService.query<RowDataPacket[]>(
+          `SELECT COUNT(*) as cnt FROM Bookings 
+           WHERE QuantityID = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ? 
+           AND BookingStatus IN ('pending', 'confirmed')`,
+          [quantityID, playDate, startTime, endTime]
+        );
+
+        if (bookedQuantities?.[0]?.cnt > 0) {
+          return next(
+            new ApiError(
+              StatusCodes.CONFLICT,
+              "Sân này đã được đặt trong khung giờ này"
+            )
+          );
+        }
+      }
 
       // Check available slots
       const [slots] = await queryService.query<RowDataPacket[]>(
@@ -206,6 +254,7 @@ const bookingController = {
       const [bookingResult] = await queryService.query<ResultSetHeader>(
         `INSERT INTO Bookings (
           FieldCode,
+          QuantityID,
           CustomerUserID,
           CustomerName,
           CustomerEmail,
@@ -220,9 +269,10 @@ const bookingController = {
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
+          quantityID || null,
           userId,
           customerName || null,
           customerEmail || null,
