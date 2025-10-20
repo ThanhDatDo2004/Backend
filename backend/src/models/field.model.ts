@@ -44,12 +44,26 @@ export type FieldRow = {
 export type FieldSlotRow = {
   slot_id: number;
   field_code: number;
-  quantity_id?: number | null;
+  quantity_id: number | null;
+  quantity_number: number | null;
   play_date: string;
   start_time: string;
   end_time: string;
   status: string;
   hold_expires_at: string | null;
+};
+
+export type BookingSlotRow = {
+  booking_slot_id: number;
+  field_code: number;
+  quantity_id: number | null;
+  quantity_number: number | null;
+  play_date: string;
+  start_time: string;
+  end_time: string;
+  booking_slot_status: string;
+  booking_status: string;
+  payment_status: string;
 };
 
 export type FieldPricingRow = {
@@ -312,31 +326,59 @@ const fieldModel = {
 
   async listSlots(fieldCode: number, playDate?: string, quantityId?: number) {
     const params: any[] = [fieldCode];
-    let clause = "WHERE FieldCode = ?";
+    let clause = "WHERE fs.FieldCode = ?";
     if (playDate) {
-      clause += " AND PlayDate = ?";
+      clause += " AND fs.PlayDate = ?";
       params.push(playDate);
     }
     // NEW: Filter by QuantityID if provided
     if (quantityId !== undefined && quantityId !== null) {
-      clause += " AND (QuantityID = ? OR QuantityID IS NULL)";
+      clause += " AND (fs.QuantityID = ? OR fs.QuantityID IS NULL)";
       params.push(quantityId);
     }
     const query = `
       SELECT
-        SlotID AS slot_id,
-        FieldCode AS field_code,
-        QuantityID AS quantity_id,
-        DATE_FORMAT(PlayDate, '%Y-%m-%d') AS play_date,
-        DATE_FORMAT(StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(EndTime, '%H:%i') AS end_time,
-        Status AS status,
-        DATE_FORMAT(HoldExpiresAt, '%Y-%m-%d %H:%i:%s') AS hold_expires_at
-      FROM Field_Slots
+        fs.SlotID AS slot_id,
+        fs.FieldCode AS field_code,
+        fs.QuantityID AS quantity_id,
+        fq.QuantityNumber AS quantity_number,
+        DATE_FORMAT(fs.PlayDate, '%Y-%m-%d') AS play_date,
+        DATE_FORMAT(fs.StartTime, '%H:%i') AS start_time,
+        DATE_FORMAT(fs.EndTime, '%H:%i') AS end_time,
+        fs.Status AS status,
+        DATE_FORMAT(fs.HoldExpiresAt, '%Y-%m-%d %H:%i:%s') AS hold_expires_at
+      FROM Field_Slots fs
+      LEFT JOIN Field_Quantity fq ON fs.QuantityID = fq.QuantityID
       ${clause}
-      ORDER BY PlayDate, StartTime
+      ORDER BY fs.PlayDate, fs.StartTime
     `;
     return (await queryService.execQueryList(query, params)) as FieldSlotRow[];
+  },
+
+  async listBookingSlots(fieldCode: number, playDate: string) {
+    const query = `
+      SELECT
+        bs.Slot_ID AS booking_slot_id,
+        bs.FieldCode AS field_code,
+        bs.QuantityID AS quantity_id,
+        fq.QuantityNumber AS quantity_number,
+        DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') AS play_date,
+        DATE_FORMAT(bs.StartTime, '%H:%i') AS start_time,
+        DATE_FORMAT(bs.EndTime, '%H:%i') AS end_time,
+        bs.Status AS booking_slot_status,
+        b.BookingStatus AS booking_status,
+        b.PaymentStatus AS payment_status
+      FROM Booking_Slots bs
+      INNER JOIN Bookings b ON bs.BookingCode = b.BookingCode
+      LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
+      WHERE bs.FieldCode = ?
+        AND bs.PlayDate = ?
+        AND b.BookingStatus IN ('pending', 'confirmed')
+    `;
+    return (await queryService.execQueryList(query, [
+      fieldCode,
+      playDate,
+    ])) as BookingSlotRow[];
   },
 
   async hasFutureBookings(fieldCode: number) {

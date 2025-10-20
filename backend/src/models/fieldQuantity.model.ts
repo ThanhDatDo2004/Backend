@@ -14,7 +14,7 @@ export type FieldQuantityRow = {
 export type AvailableQuantityRow = {
   quantity_id: number;
   quantity_number: number;
-  status: "available" | "maintenance" | "inactive";
+  status: "available" | "maintenance" | "inactive" | "held" | "booked";
 };
 
 const fieldQuantityModel = {
@@ -144,21 +144,21 @@ const fieldQuantityModel = {
       WHERE fq.FieldCode = ?
         AND fq.Status = 'available'
         AND fq.QuantityID NOT IN (
-          SELECT DISTINCT b.QuantityID
-          FROM Bookings b
-          INNER JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
-          WHERE b.FieldCode = ?
-            AND b.QuantityID IS NOT NULL
-            AND b.PaymentStatus = 'paid'
-            AND fs.FieldCode = ?
+          SELECT DISTINCT fs.QuantityID
+          FROM Field_Slots fs
+          WHERE fs.FieldCode = ?
+            AND fs.QuantityID IS NOT NULL
             AND fs.PlayDate = ?
             AND fs.StartTime < ?
             AND fs.EndTime > ?
+            AND (
+              fs.Status = 'booked'
+              OR (fs.Status = 'held' AND (fs.HoldExpiresAt IS NULL OR fs.HoldExpiresAt > NOW()))
+            )
         )
       ORDER BY fq.QuantityNumber ASC
     `;
     return (await queryService.execQueryList(query, [
-      fieldCode,
       fieldCode,
       fieldCode,
       playDate,
@@ -184,23 +184,23 @@ const fieldQuantityModel = {
   ) {
     const query = `
       SELECT DISTINCT
-        b.QuantityID AS quantity_id,
+        fs.QuantityID AS quantity_id,
         fq.QuantityNumber AS quantity_number,
-        fq.Status AS status
-      FROM Bookings b
-      INNER JOIN Field_Quantity fq ON b.QuantityID = fq.QuantityID
-      INNER JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
-      WHERE b.FieldCode = ?
-        AND b.QuantityID IS NOT NULL
-        AND b.PaymentStatus = 'paid'
-        AND fs.FieldCode = ?
+        fs.Status AS status
+      FROM Field_Slots fs
+      INNER JOIN Field_Quantity fq ON fs.QuantityID = fq.QuantityID
+      WHERE fs.FieldCode = ?
+        AND fs.QuantityID IS NOT NULL
         AND fs.PlayDate = ?
         AND fs.StartTime < ?
         AND fs.EndTime > ?
+        AND (
+          fs.Status = 'booked'
+          OR (fs.Status = 'held' AND (fs.HoldExpiresAt IS NULL OR fs.HoldExpiresAt > NOW()))
+        )
       ORDER BY fq.QuantityNumber ASC
     `;
     return (await queryService.execQueryList(query, [
-      fieldCode,
       fieldCode,
       playDate,
       endTime,
@@ -241,16 +241,19 @@ const fieldQuantityModel = {
         AND fq.Status = 'available'
         AND NOT EXISTS (
           SELECT 1
-          FROM Bookings b
-          WHERE b.QuantityID = ?
-            AND b.PlayDate = ?
-            AND b.StartTime < ?
-            AND b.EndTime > ?
-            AND b.BookingStatus IN ('pending', 'confirmed')
+          FROM Field_Slots fs
+          WHERE fs.FieldCode = fq.FieldCode
+            AND fs.QuantityID = fq.QuantityID
+            AND fs.PlayDate = ?
+            AND fs.StartTime < ?
+            AND fs.EndTime > ?
+            AND (
+              fs.Status = 'booked'
+              OR (fs.Status = 'held' AND (fs.HoldExpiresAt IS NULL OR fs.HoldExpiresAt > NOW()))
+            )
         )
     `;
     const rows = (await queryService.execQueryList(query, [
-      quantityId,
       quantityId,
       playDate,
       endTime,

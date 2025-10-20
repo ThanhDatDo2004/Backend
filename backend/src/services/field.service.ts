@@ -5,6 +5,7 @@ import fieldModel, {
   FieldPagination,
   FieldPricingRow,
   FieldSlotRow,
+  BookingSlotRow,
   FieldSorting,
 } from "../models/field.model";
 import s3Service from "./s3.service";
@@ -241,6 +242,8 @@ function mapSlotRow(slot: FieldSlotRow) {
   return {
     slot_id: slot.slot_id,
     field_code: slot.field_code,
+    quantity_id: slot.quantity_id ?? null,
+    quantity_number: slot.quantity_number ?? null,
     play_date: slot.play_date,
     start_time: slot.start_time,
     end_time: slot.end_time,
@@ -597,9 +600,93 @@ const fieldService = {
     ]);
 
     const mappedSlots = slots.map(mapSlotRow);
+    const quantitySlotKey = (slot: ReturnType<typeof mapSlotRow>) =>
+      `${slot.play_date}|${slot.start_time}|${slot.end_time}|${
+        slot.quantity_id ?? "null"
+      }`;
+    const quantitySlotKeys = new Set(
+      mappedSlots
+        .filter((slot) => slot.quantity_id !== null)
+        .map(quantitySlotKey)
+    );
+    const baseSlots = mappedSlots.filter((slot) => {
+      if (slot.quantity_id === null) {
+        if (quantitySlotKeys.has(quantitySlotKey(slot))) {
+          return false;
+        }
+        const overlapsQuantity = mappedSlots.some(
+          (qSlot) =>
+            qSlot.quantity_id !== null &&
+            qSlot.play_date === slot.play_date &&
+            qSlot.start_time < slot.end_time &&
+            qSlot.end_time > slot.start_time
+        );
+        if (overlapsQuantity) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const enrichedSlots = [...baseSlots];
+    const playDateForDay = playDate;
+    if (playDateForDay) {
+      const bookingSlots = await fieldModel.listBookingSlots(
+        fieldCode,
+        playDateForDay
+      );
+      for (const slot of bookingSlots) {
+        if (!slot.quantity_id) continue;
+        if (
+          slot.booking_slot_status === "cancelled" ||
+          slot.booking_status === "cancelled"
+        ) {
+          continue;
+        }
+
+        let status: "booked" | "held";
+        if (slot.booking_slot_status === "pending") {
+          status = "held";
+        } else if (slot.booking_slot_status === "booked") {
+          status = "booked";
+        } else {
+          // fallback: treat pending bookings as held; others skip
+          if (slot.booking_status === "pending") {
+            status = "held";
+          } else if (slot.booking_status === "confirmed") {
+            status = "booked";
+          } else {
+            continue;
+          }
+        }
+
+        const syntheticSlot = {
+          slot_id: -Math.abs(1_000_000 + slot.booking_slot_id),
+          field_code: slot.field_code,
+          quantity_id: slot.quantity_id,
+          quantity_number: slot.quantity_number ?? null,
+          play_date: slot.play_date,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          status,
+          hold_expires_at: null,
+          is_available: false,
+        };
+
+        const key = quantitySlotKey(syntheticSlot);
+        if (!quantitySlotKeys.has(key)) {
+          quantitySlotKeys.add(key);
+          enrichedSlots.push(syntheticSlot);
+        }
+      }
+    }
+
+    const blockingSlots = enrichedSlots.filter(
+      (slot) => slot.status === "booked" || slot.status === "held"
+    );
 
     if (!playDate || !pricing.length) {
-      return mappedSlots;
+      return enrichedSlots;
     }
 
     const keyFor = (slot: {
@@ -609,7 +696,7 @@ const fieldService = {
     }) => `${slot.play_date}|${slot.start_time}|${slot.end_time}`;
 
     const existingByKey = new Map<string, ReturnType<typeof mapSlotRow>>();
-    mappedSlots
+    enrichedSlots
       .filter((slot) => slot.play_date === playDate)
       .forEach((slot) => {
         existingByKey.set(keyFor(slot), slot);
@@ -625,6 +712,8 @@ const fieldService = {
             slot.end_time
           ),
           field_code: fieldCode,
+          quantity_id: null,
+          quantity_number: null,
           play_date: playDate,
           start_time: slot.start_time,
           end_time: slot.end_time,
@@ -634,13 +723,24 @@ const fieldService = {
         };
         return generated;
       })
-      .filter((slot) => !existingByKey.has(keyFor(slot)));
+      .filter((slot) => {
+        const isCoveredByBlocking = blockingSlots.some(
+          (blocking) =>
+            blocking.play_date === slot.play_date &&
+            slot.start_time >= blocking.start_time &&
+            slot.end_time <= blocking.end_time
+        );
+        if (isCoveredByBlocking) {
+          return false;
+        }
+        return !existingByKey.has(keyFor(slot));
+      });
 
     if (!generatedSlots.length) {
-      return mappedSlots;
+      return enrichedSlots;
     }
 
-    const combined = [...mappedSlots, ...generatedSlots];
+    const combined = [...enrichedSlots, ...generatedSlots];
     combined.sort((a, b) => {
       if (a.play_date !== b.play_date) {
         return a.play_date.localeCompare(b.play_date);

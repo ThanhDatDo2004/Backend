@@ -65,15 +65,18 @@ const bookingController = {
         enrichedBookings.map(async (booking: any) => {
           const [slots] = await queryService.query<RowDataPacket[]>(
             `SELECT 
-               Slot_ID,
-               DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
-               DATE_FORMAT(StartTime, '%H:%i') as StartTime,
-               DATE_FORMAT(EndTime, '%H:%i') as EndTime,
-               PricePerSlot,
-               Status 
-             FROM Booking_Slots 
-             WHERE BookingCode = ?
-             ORDER BY PlayDate, StartTime`,
+               bs.Slot_ID,
+               bs.QuantityID,
+               fq.QuantityNumber,
+               DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
+               DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
+               DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime,
+               bs.PricePerSlot,
+               bs.Status 
+             FROM Booking_Slots bs
+             LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
+             WHERE bs.BookingCode = ?
+             ORDER BY bs.PlayDate, bs.StartTime`,
             [booking.BookingCode]
           );
           return {
@@ -215,11 +218,24 @@ const bookingController = {
       }
 
       // Check available slots
+      let slotQuery = `
+        SELECT *
+        FROM Field_Slots 
+        WHERE FieldCode = ?
+          AND PlayDate = ?
+          AND StartTime = ?
+          AND EndTime = ?
+      `;
+      const slotParams: any[] = [fieldCode, playDate, startTime, endTime];
+      if (finalQuantityID !== null) {
+        slotQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
+        slotParams.push(finalQuantityID);
+      }
+      slotQuery += ` AND Status = 'available'`;
+
       const [slots] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Field_Slots 
-         WHERE FieldCode = ? AND PlayDate = ? 
-         AND StartTime = ? AND EndTime = ? AND Status = 'available'`,
-        [fieldCode, playDate, startTime, endTime]
+        slotQuery,
+        slotParams
       );
 
       if (!slots?.[0]) {
@@ -241,11 +257,30 @@ const bookingController = {
         } catch (err: any) {
           // Nếu duplicate key (slot đã tồn tại), update status về available
           if (err.code === "ER_DUP_ENTRY") {
+            let updateQuery = `
+              UPDATE Field_Slots 
+              SET Status = 'available',
+                  QuantityID = IFNULL(?, QuantityID),
+                  UpdateAt = NOW()
+              WHERE FieldCode = ?
+                AND PlayDate = ?
+                AND StartTime = ?
+                AND EndTime = ?
+            `;
+            const updateParams: any[] = [
+              finalQuantityID ?? null,
+              fieldCode,
+              playDate,
+              startTime,
+              endTime,
+            ];
+            if (finalQuantityID !== null) {
+              updateQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
+              updateParams.push(finalQuantityID);
+            }
             await queryService.query<ResultSetHeader>(
-              `UPDATE Field_Slots 
-               SET Status = 'available', UpdateAt = NOW()
-               WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
-              [fieldCode, playDate, startTime, endTime]
+              updateQuery,
+              updateParams
             );
           } else {
             throw err;
@@ -294,12 +329,60 @@ const bookingController = {
 
       const bookingCode = (bookingResult as any).insertId;
 
-      // Update slot status
+      // Lưu chi tiết slot đã đặt vào Booking_Slots (bao gồm QuantityID)
       await queryService.query<ResultSetHeader>(
-        `UPDATE Field_Slots 
-         SET Status = 'booked', BookingCode = ?, UpdateAt = NOW()
-         WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ? AND Status = 'available'`,
-        [bookingCode, fieldCode, playDate, startTime, endTime]
+        `INSERT INTO Booking_Slots (
+          BookingCode,
+          FieldCode,
+          QuantityID,
+          PlayDate,
+          StartTime,
+          EndTime,
+          PricePerSlot,
+          Status,
+          CreateAt,
+          UpdateAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', NOW(), NOW())`,
+        [
+          bookingCode,
+          fieldCode,
+          finalQuantityID,
+          playDate,
+          startTime,
+          endTime,
+          pricePerSlot,
+        ]
+      );
+
+      // Update slot status
+      let updateSlotQuery = `
+        UPDATE Field_Slots 
+        SET Status = 'booked',
+            BookingCode = ?,
+            QuantityID = IFNULL(?, QuantityID),
+            UpdateAt = NOW()
+        WHERE FieldCode = ?
+          AND PlayDate = ?
+          AND StartTime = ?
+          AND EndTime = ?
+          AND Status = 'available'
+      `;
+      const updateSlotParams: any[] = [
+        bookingCode,
+        finalQuantityID ?? null,
+        fieldCode,
+        playDate,
+        startTime,
+        endTime,
+      ];
+      if (finalQuantityID !== null) {
+        updateSlotQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
+        updateSlotParams.push(finalQuantityID);
+      }
+
+      await queryService.query<ResultSetHeader>(
+        updateSlotQuery,
+        updateSlotParams
       );
 
       return apiResponse.success(
@@ -380,15 +463,18 @@ const bookingController = {
       // Get all slots for this booking from BOOKING_SLOTS table
       const [slots] = await queryService.query<RowDataPacket[]>(
         `SELECT 
-           Slot_ID,
-           DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
-           DATE_FORMAT(StartTime, '%H:%i') as StartTime,
-           DATE_FORMAT(EndTime, '%H:%i') as EndTime,
-           PricePerSlot,
-           Status
-         FROM Booking_Slots 
-         WHERE BookingCode = ?
-         ORDER BY PlayDate, StartTime`,
+           bs.Slot_ID,
+           bs.QuantityID,
+           fq.QuantityNumber,
+           DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
+           DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
+           DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime,
+           bs.PricePerSlot,
+           bs.Status
+         FROM Booking_Slots bs
+         LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
+         WHERE bs.BookingCode = ?
+         ORDER BY bs.PlayDate, bs.StartTime`,
         [searchBookingCode]
       );
 

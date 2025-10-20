@@ -42,6 +42,7 @@ type SlotRow = RowDataPacket & {
   SlotID: number;
   Status: string;
   HoldExpiresAt: string | null;
+  QuantityID: number | null;
 };
 
 export type ConfirmBookingResult = {
@@ -57,6 +58,7 @@ export type ConfirmBookingResult = {
     play_date: string;
     start_time: string;
     end_time: string;
+    quantity_id: number | null;
   }>;
 };
 
@@ -156,19 +158,32 @@ const generateCheckinCode = () => {
 async function lockSlot(
   connection: PoolConnection,
   fieldCode: number,
-  slot: NormalizedSlot
+  slot: NormalizedSlot,
+  quantityId?: number | null
 ): Promise<SlotRow | null> {
+  const params: any[] = [
+    fieldCode,
+    slot.db_date,
+    slot.db_start_time,
+    slot.db_end_time,
+  ];
+  let quantityClause = "";
+  if (quantityId !== null && quantityId !== undefined) {
+    quantityClause = " AND (QuantityID = ? OR QuantityID IS NULL)";
+    params.push(quantityId);
+  }
   const [rows] = await connection.query<RowDataPacket[]>(
     `
-      SELECT SlotID, Status, HoldExpiresAt
+      SELECT SlotID, Status, HoldExpiresAt, QuantityID
       FROM Field_Slots
       WHERE FieldCode = ?
         AND PlayDate = ?
         AND StartTime = ?
         AND EndTime = ?
+        ${quantityClause}
       FOR UPDATE
     `,
-    [fieldCode, slot.db_date, slot.db_start_time, slot.db_end_time]
+    params
   );
   return (rows?.[0] as SlotRow) ?? null;
 }
@@ -176,9 +191,22 @@ async function lockSlot(
 async function updateExistingSlot(
   connection: PoolConnection,
   row: SlotRow,
-  slot: NormalizedSlot
+  slot: NormalizedSlot,
+  quantityId?: number | null
 ) {
   if (!row) return;
+
+  if (
+    quantityId !== null &&
+    quantityId !== undefined &&
+    row.QuantityID !== null &&
+    row.QuantityID !== quantityId
+  ) {
+    throw new ApiError(
+      StatusCodes.CONFLICT,
+      `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được giữ cho sân khác.`
+    );
+  }
   
   // Check if slot is available OR if it's held but expired
   if (row.Status === "held" && row.HoldExpiresAt) {
@@ -204,10 +232,11 @@ async function updateExistingSlot(
       UPDATE Field_Slots
       SET Status = 'booked',
           HoldExpiresAt = NULL,
+          QuantityID = IFNULL(?, QuantityID),
           UpdateAt = NOW()
       WHERE SlotID = ?
     `,
-    [row.SlotID]
+    [quantityId ?? null, row.SlotID]
   );
 }
 
@@ -300,15 +329,30 @@ export async function confirmFieldBooking(
       const updatedSlots: ConfirmBookingResult["slots"] = [];
 
       for (const slot of normalizedSlots) {
-        const row = await lockSlot(connection, fieldCode, slot);
+        const row = await lockSlot(
+          connection,
+          fieldCode,
+          slot,
+          quantityId ?? null
+        );
 
         if (row) {
-          await updateExistingSlot(connection, row, slot);
+          await updateExistingSlot(
+            connection,
+            row,
+            slot,
+            quantityId ?? null
+          );
+          const resolvedQuantityId =
+            row.QuantityID !== null && row.QuantityID !== undefined
+              ? Number(row.QuantityID)
+              : quantityId ?? null;
           updatedSlots.push({
             slot_id: Number(row.SlotID),
             play_date: slot.play_date,
             start_time: slot.start_time,
             end_time: slot.end_time,
+            quantity_id: resolvedQuantityId,
           });
         } else {
           const insertedId = await insertNewSlot(
@@ -323,6 +367,7 @@ export async function confirmFieldBooking(
             play_date: slot.play_date,
             start_time: slot.start_time,
             end_time: slot.end_time,
+            quantity_id: quantityId ?? null,
           });
         }
       }
@@ -379,6 +424,7 @@ export async function confirmFieldBooking(
           `INSERT INTO Booking_Slots (
             BookingCode,
             FieldCode,
+            QuantityID,
             PlayDate,
             StartTime,
             EndTime,
@@ -386,10 +432,11 @@ export async function confirmFieldBooking(
             Status,
             CreateAt,
             UpdateAt
-          ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
           [
             bookingCode,
             fieldCode,
+            quantityId ?? null,
             slot.db_date,
             slot.db_start_time,
             slot.db_end_time,
@@ -398,12 +445,45 @@ export async function confirmFieldBooking(
         );
 
         // Update Field_Slots (để track sân - giữ nguyên)
-        await connection.query<ResultSetHeader>(
-          `UPDATE Field_Slots 
-           SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
-           WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
-          [bookingCode, holdExpiryTime, fieldCode, slot.db_date, slot.db_start_time, slot.db_end_time]
-        );
+        if (quantityId !== null && quantityId !== undefined) {
+          await connection.query<ResultSetHeader>(
+            `UPDATE Field_Slots 
+             SET Status = 'held',
+                 BookingCode = ?,
+                 HoldExpiresAt = ?,
+                 QuantityID = IFNULL(?, QuantityID),
+                 UpdateAt = NOW()
+             WHERE FieldCode = ?
+               AND PlayDate = ?
+               AND StartTime = ?
+               AND EndTime = ?
+               AND (QuantityID = ? OR QuantityID IS NULL)`,
+            [
+              bookingCode,
+              holdExpiryTime,
+              quantityId,
+              fieldCode,
+              slot.db_date,
+              slot.db_start_time,
+              slot.db_end_time,
+              quantityId,
+            ]
+          );
+        } else {
+          await connection.query<ResultSetHeader>(
+            `UPDATE Field_Slots 
+             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+             WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
+            [
+              bookingCode,
+              holdExpiryTime,
+              fieldCode,
+              slot.db_date,
+              slot.db_start_time,
+              slot.db_end_time,
+            ]
+          );
+        }
       }
 
       return updatedSlots;
