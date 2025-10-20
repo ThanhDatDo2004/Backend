@@ -128,6 +128,7 @@ const bookingController = {
       const {
         fieldCode,
         quantityID,
+        quantity_id,
         playDate,
         startTime,
         endTime,
@@ -145,6 +146,14 @@ const bookingController = {
         );
       }
 
+      // ✅ NEW: Convert quantity_id or quantityID to number
+      const finalQuantityID =
+        quantity_id !== undefined && quantity_id !== null
+          ? Number(quantity_id)
+          : quantityID !== undefined && quantityID !== null
+          ? Number(quantityID)
+          : null;
+
       // Kiểm tra field tồn tại
       const [fields] = await queryService.query<RowDataPacket[]>(
         `SELECT * FROM Fields WHERE FieldCode = ?`,
@@ -158,11 +167,11 @@ const bookingController = {
       const field = fields[0];
 
       // ✅ NEW: If quantityID provided, validate it's available
-      if (quantityID) {
+      if (finalQuantityID) {
         // Check if quantity exists and belongs to this field
         const [quantities] = await queryService.query<RowDataPacket[]>(
           `SELECT * FROM Field_Quantity WHERE QuantityID = ? AND FieldCode = ?`,
-          [quantityID, fieldCode]
+          [finalQuantityID, fieldCode]
         );
 
         if (!quantities?.[0]) {
@@ -188,10 +197,11 @@ const bookingController = {
 
         // Check if this specific quantity is already booked for this time slot
         const [bookedQuantities] = await queryService.query<RowDataPacket[]>(
-          `SELECT COUNT(*) as cnt FROM Bookings 
-           WHERE QuantityID = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ? 
-           AND BookingStatus IN ('pending', 'confirmed')`,
-          [quantityID, playDate, startTime, endTime]
+          `SELECT COUNT(*) as cnt FROM Bookings b
+           JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
+           WHERE b.QuantityID = ? AND fs.PlayDate = ? AND fs.StartTime = ? AND fs.EndTime = ? 
+           AND b.BookingStatus IN ('pending', 'confirmed')`,
+          [finalQuantityID, playDate, startTime, endTime]
         );
 
         if (bookedQuantities?.[0]?.cnt > 0) {
@@ -226,7 +236,7 @@ const bookingController = {
               CreateAt,
               UpdateAt
             ) VALUES (?, ?, ?, ?, ?, 'available', NOW(), NOW())`,
-            [fieldCode, quantityID, playDate, startTime, endTime]
+            [fieldCode, finalQuantityID, playDate, startTime, endTime]
           );
         } catch (err: any) {
           // Nếu duplicate key (slot đã tồn tại), update status về available
@@ -251,6 +261,7 @@ const bookingController = {
       const platformFee = Math.round(totalPrice * 0.05);
       const netToShop = totalPrice - platformFee;
 
+      // ✅ FIXED: Include finalQuantityID in Bookings INSERT
       // Create booking with customer info
       const [bookingResult] = await queryService.query<ResultSetHeader>(
         `INSERT INTO Bookings (
@@ -270,7 +281,7 @@ const bookingController = {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
-          quantityID,
+          finalQuantityID,
           userId,
           customerName || null,
           customerEmail || null,

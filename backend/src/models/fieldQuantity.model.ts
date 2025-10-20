@@ -26,7 +26,10 @@ const fieldQuantityModel = {
       INSERT INTO Field_Quantity (FieldCode, QuantityNumber, Status)
       VALUES (?, ?, 'available')
     `;
-    const result = await queryService.execQuery(query, [fieldCode, quantityNumber]);
+    const result = await queryService.execQuery(query, [
+      fieldCode,
+      quantityNumber,
+    ]);
     if (typeof result === "boolean") return result;
     return Number((result as ResultSetHeader)?.insertId ?? 0);
   },
@@ -118,14 +121,13 @@ const fieldQuantityModel = {
 
   /**
    * Get available quantities for a specific time slot
-   * Available = Not booked + Status = 'available'
-   * 
+   * Available = Not booked (with paid status) + Status = 'available'
+   *
    * Logic:
    * 1. Get all quantities for this field with status = 'available'
-   * 2. Exclude quantities that have a booking in this time slot
-   *    - Check Field_Slots with matching PlayDate, StartTime, EndTime
-   *    - Get BookingCode from Field_Slots
-   *    - Get QuantityID from Bookings
+   * 2. Exclude quantities that have a PAID booking in this time slot
+   *    - Check Bookings with PaymentStatus = 'paid'
+   *    - Check Field_Slots with matching PlayDate and time overlap
    */
   async getAvailableForSlot(
     fieldCode: number,
@@ -144,18 +146,14 @@ const fieldQuantityModel = {
         AND fq.QuantityID NOT IN (
           SELECT DISTINCT b.QuantityID
           FROM Bookings b
+          INNER JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
           WHERE b.FieldCode = ?
             AND b.QuantityID IS NOT NULL
-            AND b.BookingStatus IN ('pending', 'confirmed')
-            AND EXISTS (
-              SELECT 1 FROM Field_Slots fs
-              WHERE fs.BookingCode = b.BookingCode
-                AND fs.FieldCode = ?
-                AND fs.PlayDate = ?
-                AND fs.StartTime < ?
-                AND fs.EndTime > ?
-                AND fs.Status IN ('booked', 'held')
-            )
+            AND b.PaymentStatus = 'paid'
+            AND fs.FieldCode = ?
+            AND fs.PlayDate = ?
+            AND fs.StartTime < ?
+            AND fs.EndTime > ?
         )
       ORDER BY fq.QuantityNumber ASC
     `;
@@ -171,12 +169,12 @@ const fieldQuantityModel = {
 
   /**
    * Get booked quantities for a specific time slot
-   * 
+   *
    * Logic:
-   * 1. Get quantities that have a confirmed/pending booking in this time slot
+   * 1. Get quantities that have a PAID booking in this time slot
    *    - Find Field_Slots entries for this field + playDate + time
    *    - Get the BookingCode
-   *    - Get QuantityID from that Booking
+   *    - Get QuantityID from that Booking with PaymentStatus = 'paid'
    */
   async getBookedForSlot(
     fieldCode: number,
@@ -191,18 +189,14 @@ const fieldQuantityModel = {
         fq.Status AS status
       FROM Bookings b
       INNER JOIN Field_Quantity fq ON b.QuantityID = fq.QuantityID
+      INNER JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
       WHERE b.FieldCode = ?
         AND b.QuantityID IS NOT NULL
-        AND b.BookingStatus IN ('pending', 'confirmed')
-        AND EXISTS (
-          SELECT 1 FROM Field_Slots fs
-          WHERE fs.BookingCode = b.BookingCode
-            AND fs.FieldCode = ?
-            AND fs.PlayDate = ?
-            AND fs.StartTime < ?
-            AND fs.EndTime > ?
-            AND fs.Status IN ('booked', 'held')
-        )
+        AND b.PaymentStatus = 'paid'
+        AND fs.FieldCode = ?
+        AND fs.PlayDate = ?
+        AND fs.StartTime < ?
+        AND fs.EndTime > ?
       ORDER BY fq.QuantityNumber ASC
     `;
     return (await queryService.execQueryList(query, [
@@ -217,7 +211,10 @@ const fieldQuantityModel = {
   /**
    * Update quantity status (available, maintenance, inactive)
    */
-  async updateStatus(quantityId: number, status: "available" | "maintenance" | "inactive") {
+  async updateStatus(
+    quantityId: number,
+    status: "available" | "maintenance" | "inactive"
+  ) {
     const query = `
       UPDATE Field_Quantity
       SET Status = ?, UpdatedAt = NOW()
