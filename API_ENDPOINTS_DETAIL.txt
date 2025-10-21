@@ -1,0 +1,260 @@
+🔌 SHOP REVENUE PAYOUT - API ENDPOINTS
+======================================
+
+BASE URL: http://localhost:5050
+
+AUTHENTICATION:
+===============
+Header: Authorization: Bearer {YOUR_JWT_TOKEN}
+Content-Type: application/json
+
+════════════════════════════════════════════════════════════════
+
+1️⃣ GET BANK ACCOUNTS
+====================
+
+Endpoint: GET /api/shops/me/bank-accounts
+
+Headers:
+  Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": [
+    {
+      "ShopBankID": 14,
+      "ShopCode": 2,
+      "BankName": "BIDV",
+      "AccountNumber": "08668457999",
+      "AccountHolder": "Shop Owner Name",
+      "BranchName": "Ha Noi",
+      "CreateAt": "2025-10-15T10:00:00Z",
+      "UpdateAt": "2025-10-18T12:00:00Z"
+    },
+    {
+      "ShopBankID": 3,
+      "ShopCode": 2,
+      "BankName": "BIDV",
+      "AccountNumber": "...",
+      "IsDefault": "N",
+      ...
+    }
+  ]
+}
+
+════════════════════════════════════════════════════════════════
+
+2️⃣ GET WALLET
+==============
+
+Endpoint: GET /api/shops/me/wallet
+
+Headers:
+  Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "balance": 9500,
+    "available": 9500,
+    "totalCredit": 10000,
+    "totalDebit": 500
+  }
+}
+
+════════════════════════════════════════════════════════════════
+
+3️⃣ CREATE PAYOUT REQUEST
+========================
+
+Endpoint: POST /api/shops/me/payout-requests
+
+Headers:
+  Authorization: Bearer {token}
+  Content-Type: application/json
+
+Request Body:
+{
+  "amount": 500,
+  "password": "user_password_here",
+  "note": "Monthly withdrawal",
+  "bank_id": 14
+}
+
+Parameters:
+  amount (required): Number > 0, <= wallet balance
+  password (required): User's login password (for verification)
+  note (optional): String, withdrawal note
+  bank_id (optional): Number, ShopBankID from bank accounts list
+                      If not provided, uses default account
+
+Response (201 Created):
+{
+  "success": true,
+  "data": {
+    "payoutID": 42,
+    "shopCode": 2,
+    "amount": 500,
+    "status": "requested",
+    "requestedAt": "2025-10-18T17:30:00Z"
+  },
+  "message": "Tạo yêu cầu rút tiền thành công"
+}
+
+Errors:
+  401 Unauthorized:
+  {
+    "success": false,
+    "statusCode": 401,
+    "error": {
+      "message": "Mật khẩu không chính xác"
+    }
+  }
+
+  400 Bad Request:
+  {
+    "success": false,
+    "statusCode": 400,
+    "error": {
+      "message": "Số tiền phải lớn hơn 0"
+      OR "Số dư không đủ"
+    }
+  }
+
+  404 Not Found:
+  {
+    "success": false,
+    "statusCode": 404,
+    "error": {
+      "message": "Không tìm thấy tài khoản ngân hàng"
+    }
+  }
+
+  500 Server Error:
+  {
+    "success": false,
+    "statusCode": 500,
+    "error": {
+      "message": "Lỗi tạo yêu cầu rút tiền"
+    }
+  }
+
+════════════════════════════════════════════════════════════════
+
+4️⃣ LIST PAYOUT REQUESTS
+=======================
+
+Endpoint: GET /api/shops/me/payout-requests
+
+Headers:
+  Authorization: Bearer {token}
+
+Query Parameters (optional):
+  status=requested (or 'paid', 'rejected')
+  limit=10
+  offset=0
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "data": [
+      {
+        "PayoutID": 42,
+        "ShopCode": 2,
+        "Amount": 500,
+        "Status": "requested",
+        "BankName": "BIDV",
+        "AccountNumber": "08668457999",
+        "AccountHolder": "Shop Owner",
+        "Note": "Monthly withdrawal",
+        "RequestedAt": "2025-10-18T17:30:00Z",
+        "ProcessedAt": null
+      }
+    ],
+    "pagination": {
+      "limit": 10,
+      "offset": 0,
+      "total": 1
+    }
+  }
+}
+
+════════════════════════════════════════════════════════════════
+
+CURL EXAMPLES
+=============
+
+1. Get Bank Accounts:
+   curl -X GET http://localhost:5050/api/shops/me/bank-accounts \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+2. Get Wallet:
+   curl -X GET http://localhost:5050/api/shops/me/wallet \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+3. Create Payout (without bank_id):
+   curl -X POST http://localhost:5050/api/shops/me/payout-requests \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "amount": 500,
+       "password": "your_password",
+       "note": "Test withdrawal"
+     }'
+
+4. Create Payout (with bank_id):
+   curl -X POST http://localhost:5050/api/shops/me/payout-requests \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "amount": 500,
+       "bank_id": 14,
+       "password": "your_password",
+       "note": "Test withdrawal"
+     }'
+
+5. List Payouts:
+   curl -X GET http://localhost:5050/api/shops/me/payout-requests?status=requested \
+     -H "Authorization: Bearer YOUR_TOKEN"
+
+════════════════════════════════════════════════════════════════
+
+TEST WORKFLOW
+=============
+
+1. Call endpoint 1 (Get Bank Accounts)
+   → Get ShopBankID of default account (IsDefault: Y)
+   → Note: ShopBankID: 14
+
+2. Call endpoint 2 (Get Wallet)
+   → Get balance: 9500
+   → Amount can be max 9500
+
+3. Call endpoint 3 (Create Payout)
+   → amount: 500 (must be <= 9500)
+   → password: your actual password
+   → bank_id: 14 (from step 1)
+   → Expected: 201 Created with payoutID
+
+4. Call endpoint 4 (List Payouts)
+   → Should show the created payout
+
+SUCCESS SIGNS:
+==============
+✅ Endpoint 1: Shows default bank (IsDefault: Y)
+✅ Endpoint 2: balance > 0
+✅ Endpoint 3: Returns 201 with payoutID
+✅ Endpoint 4: New payout in list with status "requested"
+
+TROUBLESHOOTING:
+================
+
+If error on endpoint 3:
+  - Check password is correct
+  - Check amount <= balance (from endpoint 2)
+  - Check bank account exists (from endpoint 1)
+  - Check default bank has IsDefault: Y
+

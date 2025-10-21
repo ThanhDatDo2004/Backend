@@ -1,0 +1,225 @@
+═══════════════════════════════════════════════════════════════
+  MULTIPLE TIME SLOTS - FILES MODIFIED
+═══════════════════════════════════════════════════════════════
+
+📋 DANH SÁCH CÁC FILE ĐÃ THAY ĐỔI
+
+File: backend/src/controllers/booking.controller.ts
+
+1️⃣ Sửa phương thức: listBookings() (Line 13-112)
+   ✅ Thêm query: Fetch tất cả Field_Slots cho từng booking
+   ✅ Format StartTime, EndTime thành HH:mm
+   ✅ Trả về mảng slots đầy đủ trong response
+   
+   TRƯỚC:
+   ❌ slots: slots || []
+   
+   SAU:
+   ✅ SELECT DATE_FORMAT(StartTime, '%H:%i') as StartTime
+   ✅ ORDER BY PlayDate, StartTime
+   ✅ Tất cả slots đều được trả về
+
+2️⃣ Sửa phương thức: getBooking() (Line 266-342)
+   ✅ Thêm query: Fetch tất cả Field_Slots cho booking
+   ✅ Format times, sort by date
+   ✅ Trả về slots array trong response
+   
+   Tương tự như listBookings()
+
+3️⃣ Sửa phương thức: listShopBookings() (Line 680-800)
+   ✅ Thêm fetch slots logic
+   ✅ Format times
+   ✅ Trả về slots array
+   
+   Tương tự cho shop bookings
+
+═══════════════════════════════════════════════════════════════
+  CODE CHANGES SUMMARY
+═══════════════════════════════════════════════════════════════
+
+QUERY THÊM:
+───────────
+SELECT 
+  SlotID,
+  PlayDate, 
+  DATE_FORMAT(StartTime, '%H:%i') as StartTime,
+  DATE_FORMAT(EndTime, '%H:%i') as EndTime,
+  Status 
+FROM Field_Slots 
+WHERE BookingCode = ?
+ORDER BY PlayDate, StartTime
+
+LOGIC THÊM:
+───────────
+const bookingsWithSlots = await Promise.all(
+  enrichedBookings.map(async (booking: any) => {
+    const [slots] = await queryService.query<RowDataPacket[]>(query);
+    return {
+      ...booking,
+      slots: slots || []
+    };
+  })
+);
+
+RESPONSE MỚI:
+─────────────
+{
+  BookingCode: 123,
+  FieldName: "Sân A",
+  StartTime: "10:00",
+  EndTime: "11:00",
+  slots: [
+    { SlotID: 1, StartTime: "10:00", EndTime: "11:00" },
+    { SlotID: 2, StartTime: "11:00", EndTime: "12:00" }
+  ]
+}
+
+═══════════════════════════════════════════════════════════════
+  ENDPOINTS AFFECTED
+═══════════════════════════════════════════════════════════════
+
+1. GET /api/bookings
+   ✅ Trả về slots array cho mỗi booking
+
+2. GET /api/bookings/:bookingCode
+   ✅ Trả về slots array cho booking
+
+3. GET /api/shops/me/bookings
+   ✅ Trả về slots array cho mỗi booking
+
+═══════════════════════════════════════════════════════════════
+  BENEFITS
+═══════════════════════════════════════════════════════════════
+
+✅ Hiển thị tất cả khung giờ đã chọn
+✅ Không thay đổi database schema
+✅ Không thay đổi booking creation logic
+✅ Format times dễ đọc (HH:mm)
+✅ Sắp xếp slots theo ngày/giờ
+✅ Tương thích với frontend mới/cũ
+✅ Dễ mở rộng (thêm pagination cho slots nếu cần)
+
+═══════════════════════════════════════════════════════════════
+  BEFORE vs AFTER
+═══════════════════════════════════════════════════════════════
+
+BEFORE:
+───────
+{
+  BookingCode: 123,
+  StartTime: "10:00",
+  EndTime: "11:00",
+  slots: []  ❌ TRỐNG HOẶC CHỈ 1 SLOT
+}
+
+AFTER:
+──────
+{
+  BookingCode: 123,
+  StartTime: "10:00",
+  EndTime: "11:00",
+  slots: [
+    { SlotID: 1, PlayDate: "2025-10-22", 
+      StartTime: "10:00", EndTime: "11:00" },
+    { SlotID: 2, PlayDate: "2025-10-22", 
+      StartTime: "11:00", EndTime: "12:00" }
+  ]  ✅ TẤT CẢ CÁC SLOTS
+}
+
+═══════════════════════════════════════════════════════════════
+  DATABASE (NO CHANGES)
+═══════════════════════════════════════════════════════════════
+
+Bookings table: VẪN GIỮ NGUYÊN
+- BookingCode (PK)
+- FieldCode
+- PlayDate
+- StartTime (slot đầu)
+- EndTime (slot đầu)
+- TotalPrice (tính cho tất cả slots)
+
+Field_Slots table: VẪN GIỮ NGUYÊN
+- SlotID (PK)
+- FieldCode
+- BookingCode (FK) ← QUAN TRỌNG
+- PlayDate
+- StartTime (slot thứ N)
+- EndTime (slot thứ N)
+- Status
+
+═══════════════════════════════════════════════════════════════
+  PERFORMANCE NOTES
+═══════════════════════════════════════════════════════════════
+
+📊 Performance Impact: MINIMAL
+────────────────────────────
+
+- Thêm 1 query per booking để fetch slots
+- Với pagination (limit 10), = 10 extra queries per request
+- Các query nhỏ (< 1ms mỗi cái)
+- Có index trên BookingCode (FK)
+
+⚡ Optimization có thể làm sau:
+────────────────────────────
+
+1. Cache results (Redis)
+2. Batch queries với IN clause
+3. Aggregate slots khi fetching bookings
+4. Paginate slots nếu có 100+ slots per booking
+
+═══════════════════════════════════════════════════════════════
+  TESTING STEPS
+═══════════════════════════════════════════════════════════════
+
+1. Build backend:
+   cd backend && npm run build
+
+2. Start server:
+   npm start
+
+3. Test GET /api/bookings:
+   curl http://localhost:5050/api/bookings
+
+4. Verify response has slots array with multiple items
+
+5. Test GET /api/bookings/123:
+   curl http://localhost:5050/api/bookings/123
+
+6. Verify all slots appear in response
+
+═══════════════════════════════════════════════════════════════
+  FRONTEND INTEGRATION
+═══════════════════════════════════════════════════════════════
+
+Frontend nhận được:
+
+```json
+{
+  "slots": [
+    {"StartTime": "10:00", "EndTime": "11:00"},
+    {"StartTime": "11:00", "EndTime": "12:00"},
+    {"StartTime": "12:00", "EndTime": "13:00"}
+  ]
+}
+```
+
+Có thể render:
+- List các time slots
+- Timeline visualization
+- Bảng với cột "Khung giờ"
+- Tổng thời gian: 3 giờ
+
+═══════════════════════════════════════════════════════════════
+  DEPLOYMENT CHECKLIST
+═══════════════════════════════════════════════════════════════
+
+☑ Sửa booking.controller.ts
+☑ Compile TypeScript
+☑ No linting errors
+☑ Test 3 endpoints
+☑ Verify slots in response
+☑ Deploy to staging
+☑ Smoke test
+☑ Deploy to production
+
+═══════════════════════════════════════════════════════════════

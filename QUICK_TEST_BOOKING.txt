@@ -1,0 +1,205 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                  📮 QUICK BOOKING TEST - POSTMAN GUIDE                   ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+🔗 TWO API ENDPOINTS:
+
+1️⃣  CREATE BOOKING (Từ Booking Page)
+   Endpoint: POST /api/bookings/create
+   Purpose: User chọn sân + khung giờ → Tạo booking
+
+2️⃣  CONFIRM BOOKING (Từ Payment Result)
+   Endpoint: POST /api/field/68/confirm
+   Purpose: Sau khi thanh toán → Confirm booking
+
+─────────────────────────────────────────────────────────────────────────────
+
+📋 TEST 1: SINGLE COURT - SINGLE SLOT
+
+Endpoint: POST /api/bookings/create
+
+Body:
+{
+  "fieldCode": 68,
+  "quantity_id": 22,
+  "playDate": "2025-10-21",
+  "startTime": "08:00",
+  "endTime": "09:00",
+  "customerName": "Nguyễn Văn A",
+  "customerEmail": "a@example.com",
+  "customerPhone": "0123456789"
+}
+
+Expected Response:
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "bookingCode": 80,
+    "totalPrice": 100000,
+    "fieldName": "Sân 00"
+  }
+}
+
+Database Result:
+✅ Bookings.QuantityID = 22
+✅ Bookings.PaymentStatus = 'pending'
+✅ Field_Slots.QuantityID = 22
+✅ Field_Slots.Status = 'held'
+
+─────────────────────────────────────────────────────────────────────────────
+
+📋 TEST 2: SAME COURT AGAIN - SHOULD FAIL
+
+Endpoint: POST /api/bookings/create
+
+Body:
+{
+  "fieldCode": 68,
+  "quantity_id": 22,
+  "playDate": "2025-10-21",
+  "startTime": "08:00",
+  "endTime": "09:00",
+  "customerName": "Nguyễn Văn B",
+  "customerEmail": "b@example.com",
+  "customerPhone": "0987654321"
+}
+
+Expected Response:
+{
+  "success": false,
+  "statusCode": 409,
+  "error": {
+    "message": "Sân này đã được đặt trong khung giờ này"
+  }
+}
+
+✅ Returns 409 Conflict (correct!)
+
+─────────────────────────────────────────────────────────────────────────────
+
+📋 TEST 3: DIFFERENT COURT - SAME TIME - SHOULD SUCCESS
+
+Endpoint: POST /api/bookings/create
+
+Body:
+{
+  "fieldCode": 68,
+  "quantity_id": 24,
+  "playDate": "2025-10-21",
+  "startTime": "08:00",
+  "endTime": "09:00",
+  "customerName": "Nguyễn Văn C",
+  "customerEmail": "c@example.com",
+  "customerPhone": "0111111111"
+}
+
+Expected Response:
+{
+  "success": true,
+  "statusCode": 201,
+  "data": {
+    "bookingCode": 81,
+    "totalPrice": 100000
+  }
+}
+
+Database Result:
+✅ 2 bookings created with different QuantityID
+✅ Bookings: QuantityID 22 & 24
+✅ Field_Slots: QuantityID 22 & 24
+
+─────────────────────────────────────────────────────────────────────────────
+
+📋 TEST 4: MULTIPLE SLOTS - SAME COURT
+
+Endpoint: POST /api/field/68/confirm
+
+Body:
+{
+  "slots": [
+    {
+      "playDate": "2025-10-21",
+      "startTime": "10:00",
+      "endTime": "11:00"
+    },
+    {
+      "playDate": "2025-10-21",
+      "startTime": "11:00",
+      "endTime": "12:00"
+    }
+  ],
+  "quantity_id": 23,
+  "total_price": 200000,
+  "payment_method": "bank_transfer",
+  "customer": {
+    "name": "Nguyễn Văn D",
+    "email": "d@example.com",
+    "phone": "0222222222"
+  }
+}
+
+Expected Response:
+{
+  "success": true,
+  "statusCode": 200,
+  "data": {
+    "booking_code": "82",
+    "transaction_id": "TXABCD1234",
+    "slots": [
+      { "slot_id": 1, "start_time": "10:00", "end_time": "11:00" },
+      { "slot_id": 2, "start_time": "11:00", "end_time": "12:00" }
+    ]
+  }
+}
+
+Database Result:
+✅ 2 Field_Slots created with same QuantityID (23)
+✅ Bookings.QuantityID = 23
+✅ Field_Slots.Status = 'held'
+
+─────────────────────────────────────────────────────────────────────────────
+
+🔑 IMPORTANT NOTES:
+
+1. quantity_id (lowercase!) - NOT quantityID
+   ✅ Correct: "quantity_id": 22
+   ❌ Wrong: "quantityID": 22
+
+2. Authorization Header Required:
+   Authorization: Bearer YOUR_TOKEN
+
+3. After each test, check database:
+   SELECT * FROM Bookings WHERE BookingCode = XX;
+   SELECT * FROM Field_Slots WHERE BookingCode = XX;
+
+4. Available Quantities API:
+   GET /api/fields/68/available-quantities?playDate=2025-10-21&startTime=08:00&endTime=09:00
+   
+   Shows availableCount changes:
+   - Start: 4 (all available)
+   - After Test 1: 3 (Court 22 booked)
+   - After Test 3: 2 (Court 22 & 24 booked)
+
+5. Field_Slots.Status values:
+   - 'available' = Còn trống
+   - 'held' = Đang giữ (15 phút)
+   - 'booked' = Đã được đặt
+
+─────────────────────────────────────────────────────────────────────────────
+
+✅ TEST RESULTS SUMMARY:
+
+Test 1 ✅ Single court booked
+Test 2 ✅ Same court blocked (409)
+Test 3 ✅ Different court allowed
+Test 4 ✅ Multiple slots same court
+
+✅ QuantityID tracking works!
+✅ Availability checks work!
+✅ Backend ready for frontend!
+
+Full details: POSTMAN_CONFIRM_BOOKING.md
+

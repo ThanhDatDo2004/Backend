@@ -1,0 +1,89 @@
+═══════════════════════════════════════════════════════════════
+  HELD SLOTS CLEANUP FIX - FILES MODIFIED
+═══════════════════════════════════════════════════════════════
+
+📋 DANH SÁCH CÁC FILE ĐÃ THAY ĐỔI
+
+1. ✏️ backend/src/services/booking.service.ts
+   ✅ Sửa hàm: updateExistingSlot() (Line 176-199)
+      - Kiểm tra nếu held slot đã hết hạn thì cho phép
+   
+   ✅ Sửa hàm: releaseExpiredHeldSlots() (Line 231-245)
+      - Thay UPDATE thay vì DELETE
+      - Set Status = 'available', HoldExpiresAt = NULL
+   
+   ✅ Thêm hàm: cleanupExpiredHeldSlots() (export)
+      - Dọn dẹp tất cả expired held slots
+
+2. ✏️ backend/src/controllers/field.controller.ts
+   ✅ Thêm import: queryService (Line 9)
+   
+   ✅ Sửa hàm: availability() (Line 222-271)
+      - Thêm cleanup logic trước khi return availability
+      - Tự động UPDATE held slots hết hạn → available
+
+3. ✏️ backend/src/index.ts
+   ✅ Thêm import: cleanupExpiredHeldSlots (Line 47)
+   
+   ✅ Thêm setup: Cron job (Line 73-77)
+      - setInterval chạy cleanup mỗi 60 giây
+      - Dọn dẹp tất cả expired held slots toàn cục
+
+═══════════════════════════════════════════════════════════════
+  TÓTAT CHỈ TIÊU
+═══════════════════════════════════════════════════════════════
+
+LOẠI THAY ĐỔI:
+  - Sửa: 2 hàm (updateExistingSlot, releaseExpiredHeldSlots)
+  - Thêm: 2 hàm (cleanupExpiredHeldSlots, setInterval cron)
+  - Thêm: 2 import (queryService, cleanupExpiredHeldSlots)
+
+SỐ LƯỢNG:
+  - Files sửa: 3 files
+  - Hàm được sửa: 2
+  - Hàm được thêm: 2
+  - Import được thêm: 2
+
+═══════════════════════════════════════════════════════════════
+  QUY TRÌNH DEPLOY
+═══════════════════════════════════════════════════════════════
+
+1. Backup database (safety first!)
+
+2. Rebuild backend:
+   cd backend
+   npm run build
+
+3. Restart backend server:
+   npm start
+
+4. Test:
+   - Truy cập http://localhost:5173/booking/48
+   - Chọn khung giờ
+   - Đợi 15+ phút
+   - Reload trang
+   - ✅ Khung giờ sẽ hiện available
+
+═══════════════════════════════════════════════════════════════
+  3 ĐIỂM DỌN DẸP
+═══════════════════════════════════════════════════════════════
+
+1️⃣ Khi user truy cập availability endpoint
+   - Tự động cleanup held slots hết hạn
+
+2️⃣ Khi xác nhận booking mới
+   - confirmFieldBooking() gọi releaseExpiredHeldSlots()
+
+3️⃣ Mỗi 1 phút (cron job)
+   - Chạy cleanupExpiredHeldSlots() toàn cục
+
+═══════════════════════════════════════════════════════════════
+  TRẠNG THÁI
+═══════════════════════════════════════════════════════════════
+
+✅ PASSED - Tất cả files đã sửa
+✅ PASSED - Tất cả imports đã thêm  
+✅ PASSED - Cron job đã setup
+✅ PASSED - Linting errors: NONE
+
+═══════════════════════════════════════════════════════════════

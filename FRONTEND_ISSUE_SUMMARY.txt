@@ -1,0 +1,81 @@
+🔴 ISSUE: Postman Works ✅ but Website Fails ❌
+================================================
+
+POSTMAN TEST:
+POST /api/shops/me/payout-requests
+{
+  "amount": 500,
+  "bank_id": 14,
+  "password": "anhchang1",
+  "note": "Test"
+}
+Response: 201 Created ✅
+
+WEBSITE TEST:
+Same endpoint from frontend form
+Response: 500 Error ❌
+"Không tìm thấy tài khoản ngân hàng"
+
+ROOT CAUSE:
+===========
+Frontend form NOT sending same data as Postman!
+
+Likely issues:
+1. bank_id not being sent (undefined)
+2. bank_id is string "14" instead of number 14
+3. bank_id is null
+4. amount is wrong
+5. password is different
+
+QUICK FIX:
+===========
+
+Check frontend code for payout form:
+
+BEFORE (maybe):
+const handleSubmit = async () => {
+  const response = await fetch('/api/shops/me/payout-requests', {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: formData.amount,
+      password: formData.password,
+      note: formData.note
+      // Missing bank_id!
+    })
+  });
+};
+
+AFTER (should be):
+const handleSubmit = async () => {
+  const response = await fetch('/api/shops/me/payout-requests', {
+    method: 'POST',
+    body: JSON.stringify({
+      amount: parseInt(formData.amount),     // Ensure number
+      bank_id: parseInt(formData.bank_id),   // Ensure number
+      password: formData.password,
+      note: formData.note
+    })
+  });
+};
+
+IMPORTANT:
+- amount must be NUMBER > 0
+- bank_id must be NUMBER (from bank list)
+- password must be STRING (exact password)
+- All fields must be included
+
+TEST:
+1. Open DevTools (F12)
+2. Go to Network tab
+3. Submit form
+4. Click the payout-requests request
+5. Check Request body
+6. Compare with Postman version
+
+THEN SHARE:
+- The Request body from DevTools
+- bank_id value and type
+- Full error message
+
+I'LL FIX IT! 🔧
+

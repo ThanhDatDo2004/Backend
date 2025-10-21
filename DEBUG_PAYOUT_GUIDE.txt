@@ -1,0 +1,55 @@
+DEBUG PAYOUT REQUEST - STEP BY STEP
+====================================
+
+CURRENT ISSUE:
+"Không tìm thấy tài khoản ngân hàng"
+
+DEBUG STEPS:
+============
+
+STEP 1: Check server logs
+   Command: tail -f /tmp/backend.log | grep "[Payout]"
+   
+   Look for messages like:
+   [Payout] Looking for DEFAULT account - shopCode: 15
+   [Payout] Bank query result: {rowCount: 0, data: null}
+   [Payout] All bank accounts for shopCode 15: []
+
+STEP 2: Check database for bank accounts
+   Command: mysql -u root -p123456 booking_system
+   Query: SELECT ShopBankID, BankName, IsDefault, ShopCode FROM Shop_Bank_Accounts WHERE ShopCode = 15;
+   
+   ISSUE 1: No rows returned
+   => Shop has NO bank accounts. Add one:
+      INSERT INTO Shop_Bank_Accounts 
+      (ShopCode, BankName, AccountNumber, AccountHolder, IsDefault)
+      VALUES (15, 'Vietcombank', '1234567890', 'Owner Name', 'Y');
+
+   ISSUE 2: Rows exist but IsDefault = 'N'
+   => Set one as default:
+      UPDATE Shop_Bank_Accounts 
+      SET IsDefault = 'Y' 
+      WHERE ShopBankID = 5 AND ShopCode = 15;
+
+STEP 3: Verify user-shop relationship
+   Query: SELECT ShopCode FROM Shops WHERE UserID = YOUR_USER_ID AND IsApproved = 'Y';
+   
+   If empty:
+   => User has no approved shop. Cannot create payout request.
+
+STEP 4: After fix, test again
+   Make payout request and check logs for success message showing:
+   [Payout] Bank query result: {rowCount: 1, data: {ShopBankID: 5, ...}}
+
+SUCCESS SIGNS:
+===============
+✅ rowCount: 1
+✅ data has BankName, AccountNumber
+✅ Response: 201 Created {payoutID: ...}
+
+WHAT TO SHARE IF STILL FAILING:
+=================================
+1. The exact error message from response
+2. Logs output from: tail -50 /tmp/backend.log | grep "[Payout]"
+3. Database query result from: SELECT * FROM Shop_Bank_Accounts WHERE ShopCode = ?
+
