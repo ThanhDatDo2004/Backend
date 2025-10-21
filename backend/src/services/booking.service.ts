@@ -269,20 +269,108 @@ async function insertNewSlot(
   return Number(result.insertId);
 }
 
-/**
- * Release expired held slots (> 15 minutes)
- * Change status to 'available' instead of deleting
- */
-async function releaseExpiredHeldSlots(fieldCode: number) {
+type ExpiredSlot = {
+  slotId: number;
+  bookingCode: number | null;
+};
+
+async function getExpiredHeldSlots(
+  fieldCode?: number
+): Promise<ExpiredSlot[]> {
+  const params: Array<number> = [];
+  let clause = `
+    Status = 'held'
+    AND HoldExpiresAt IS NOT NULL
+    AND HoldExpiresAt <= NOW()
+  `;
+  if (fieldCode) {
+    clause += " AND FieldCode = ?";
+    params.push(fieldCode);
+  }
+
+  const rows = (await queryService.execQueryList(
+    `SELECT SlotID, BookingCode
+     FROM Field_Slots
+     WHERE ${clause}`,
+    params
+  )) as Array<{ SlotID: number; BookingCode: number | null }>;
+
+  return rows.map((row) => ({
+    slotId: Number(row.SlotID),
+    bookingCode:
+      row.BookingCode !== null && row.BookingCode !== undefined
+        ? Number(row.BookingCode)
+        : null,
+  }));
+}
+
+async function cancelExpiredBookings(expiredSlots: ExpiredSlot[]) {
+  const bookingCodes = Array.from(
+    new Set(
+      expiredSlots
+        .map((slot) => slot.bookingCode)
+        .filter(
+          (code): code is number =>
+            Number.isFinite(code) && Number(code) > 0
+        )
+    )
+  );
+
+  if (!bookingCodes.length) return;
+
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Booking_Slots
+     SET Status = 'cancelled',
+         UpdateAt = NOW()
+     WHERE Status = 'pending'
+       AND BookingCode IN (?)`,
+    [bookingCodes]
+  );
+
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Bookings
+     SET BookingStatus = 'cancelled',
+         PaymentStatus = CASE
+           WHEN PaymentStatus = 'paid' THEN PaymentStatus
+           ELSE 'failed'
+         END,
+         UpdateAt = NOW()
+     WHERE BookingStatus = 'pending'
+       AND BookingCode IN (?)`,
+    [bookingCodes]
+  );
+
+  await queryService.query<ResultSetHeader>(
+    `UPDATE Payments_Admin
+     SET PaymentStatus = 'failed',
+         UpdateAt = NOW()
+     WHERE PaymentStatus = 'pending'
+       AND BookingCode IN (?)`,
+    [bookingCodes]
+  );
+}
+
+export async function releaseExpiredHeldSlots(fieldCode: number) {
   try {
+    const expiredSlots = await getExpiredHeldSlots(fieldCode);
+    if (!expiredSlots.length) return;
+
+    await cancelExpiredBookings(expiredSlots);
+
+    const slotIds = expiredSlots
+      .map((slot) => slot.slotId)
+      .filter((slotId) => Number.isFinite(slotId) && slotId > 0);
+
+    if (!slotIds.length) return;
+
     await queryService.query<ResultSetHeader>(
       `UPDATE Field_Slots 
-       SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
-       WHERE FieldCode = ? 
-       AND Status = 'held' 
-       AND HoldExpiresAt IS NOT NULL 
-       AND HoldExpiresAt < NOW()`,
-      [fieldCode]
+       SET Status = 'available',
+           BookingCode = NULL,
+           HoldExpiresAt = NULL,
+           UpdateAt = NOW()
+       WHERE SlotID IN (?)`,
+      [slotIds]
     );
   } catch (e) {
     console.error('Lỗi release expired held slots:', e);
@@ -616,15 +704,29 @@ export async function confirmFieldBooking(
 
 export async function cleanupExpiredHeldSlots() {
   try {
+    const expiredSlots = await getExpiredHeldSlots();
+    if (!expiredSlots.length) return;
+
+    await cancelExpiredBookings(expiredSlots);
+
+    const slotIds = expiredSlots
+      .map((slot) => slot.slotId)
+      .filter((slotId) => Number.isFinite(slotId) && slotId > 0);
+
+    if (!slotIds.length) return;
+
     await queryService.query<ResultSetHeader>(
       `UPDATE Field_Slots 
-       SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
-       WHERE Status = 'held' 
-       AND HoldExpiresAt IS NOT NULL 
-       AND HoldExpiresAt < NOW()`,
-      []
+       SET Status = 'available',
+           BookingCode = NULL,
+           HoldExpiresAt = NULL,
+           UpdateAt = NOW()
+       WHERE SlotID IN (?)`,
+      [slotIds]
     );
-    console.log("Đã xóa các khung giờ đã hết hạn.");
+    console.log(
+      `Đã giải phóng ${slotIds.length} khung giờ giữ chỗ hết hạn.`
+    );
   } catch (e) {
     console.error('Lỗi xóa khung giờ đã hết hạn:', e);
   }

@@ -230,11 +230,18 @@ function generateSyntheticSlotId(
 function mapSlotRow(slot: FieldSlotRow) {
   // Check if hold has expired
   let status = slot.status;
-  if (status === "held" && slot.hold_expires_at) {
+  const holdExpiryEpochMs =
+    typeof slot.hold_exp_ts === "number" && !Number.isNaN(slot.hold_exp_ts)
+      ? slot.hold_exp_ts * 1000
+      : null;
+  if (status === "held" && holdExpiryEpochMs !== null) {
+    if (Date.now() > holdExpiryEpochMs) {
+      status = "available";
+    }
+  } else if (status === "held" && slot.hold_expires_at) {
+    // fallback for legacy string
     const holdExpiryTime = new Date(slot.hold_expires_at);
-    const now = new Date();
-    if (now > holdExpiryTime) {
-      // Hold has expired, treat as available
+    if (Date.now() > holdExpiryTime.getTime()) {
       status = "available";
     }
   }
@@ -249,7 +256,16 @@ function mapSlotRow(slot: FieldSlotRow) {
     end_time: slot.end_time,
     status: status,
     hold_expires_at: slot.hold_expires_at,
+    hold_expires_at_ts:
+      holdExpiryEpochMs ??
+      (slot.hold_expires_at
+        ? Math.floor(new Date(slot.hold_expires_at).getTime() / 1000)
+        : null),
     is_available: status === "available",
+    update_at_ts:
+      typeof slot.update_at_ts === "number" && !Number.isNaN(slot.update_at_ts)
+        ? slot.update_at_ts
+        : null,
   };
 }
 
@@ -671,6 +687,8 @@ const fieldService = {
           status,
           hold_expires_at: null,
           is_available: false,
+          hold_expires_at_ts: null,
+          update_at_ts: null,
         };
 
         const key = quantitySlotKey(syntheticSlot);
@@ -720,6 +738,8 @@ const fieldService = {
           status: "available" as const,
           hold_expires_at: null,
           is_available: true,
+          hold_expires_at_ts: null,
+          update_at_ts: null,
         };
         return generated;
       })

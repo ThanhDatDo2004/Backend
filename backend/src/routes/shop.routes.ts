@@ -20,6 +20,8 @@ router.put("/me", requireAuth, shopController.updateMe);
 router.get("/me/fields", requireAuth, shopFieldController.listForMe);
 router.get("/me/fields/:fieldCode", requireAuth, shopFieldController.getForMe);
 router.post("/me/fields", requireAuth, fieldImagesUpload, shopFieldController.createForMe);
+router.get("/:shopCode/utilities", shopController.getUtilities);
+router.post("/:shopCode/utilities", requireAuth, shopController.updateUtilities);
 router.get("/:shopCode/fields", shopFieldController.list);
 router.post("/:shopCode/fields", fieldImagesUpload, shopFieldController.create);
 router.put("/me/fields/:fieldCode", requireAuth, fieldImagesUpload, shopFieldController.updateForMe);

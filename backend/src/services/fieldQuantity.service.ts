@@ -3,6 +3,7 @@ import fieldQuantityModel, {
 } from "../models/fieldQuantity.model";
 import { ApiError } from "http-errors";
 import { StatusCodes } from "http-status-codes";
+import { releaseExpiredHeldSlots } from "./booking.service";
 
 interface SlotAvailability {
   fieldCode: number;
@@ -85,6 +86,9 @@ const fieldQuantityService = {
     startTime: string,
     endTime: string
   ): Promise<SlotAvailability> {
+    // Release any expired holds before checking availability
+    await releaseExpiredHeldSlots(fieldCode);
+
     // Get all quantities for this field
     const allQuantities = await fieldQuantityModel.getByFieldCode(fieldCode);
 

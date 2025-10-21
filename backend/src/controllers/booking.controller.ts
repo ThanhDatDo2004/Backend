@@ -79,9 +79,16 @@ const bookingController = {
              ORDER BY bs.PlayDate, bs.StartTime`,
             [booking.BookingCode]
           );
+
+          const quantityInfo = (slots || []).find(
+            (slot: RowDataPacket) => slot.QuantityNumber != null
+          );
+
           return {
             ...booking,
             slots: slots || [],
+            quantityId: quantityInfo?.QuantityID ?? null,
+            quantityNumber: quantityInfo?.QuantityNumber ?? null,
           };
         })
       );
@@ -931,20 +938,30 @@ const bookingController = {
         enrichedBookings.map(async (booking: any) => {
           const [slots] = await queryService.query<RowDataPacket[]>(
             `SELECT 
-               Slot_ID,
-               DATE_FORMAT(PlayDate, '%Y-%m-%d') as PlayDate,
-               DATE_FORMAT(StartTime, '%H:%i') as StartTime,
-               DATE_FORMAT(EndTime, '%H:%i') as EndTime,
-               PricePerSlot,
-               Status 
-             FROM Booking_Slots 
-             WHERE BookingCode = ?
-             ORDER BY PlayDate, StartTime`,
+               bs.Slot_ID,
+               bs.QuantityID,
+               fq.QuantityNumber,
+               DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') AS PlayDate,
+               DATE_FORMAT(bs.StartTime, '%H:%i') AS StartTime,
+               DATE_FORMAT(bs.EndTime, '%H:%i') AS EndTime,
+               bs.PricePerSlot,
+               bs.Status
+             FROM Booking_Slots bs
+             LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
+             WHERE bs.BookingCode = ?
+             ORDER BY bs.PlayDate, bs.StartTime`,
             [booking.BookingCode]
           );
+
+          const quantityInfo = (slots || []).find(
+            (slot: any) => slot.QuantityNumber != null
+          );
+
           return {
             ...booking,
             slots: slots || [],
+            quantityId: quantityInfo?.QuantityID ?? null,
+            quantityNumber: quantityInfo?.QuantityNumber ?? null,
           };
         })
       );

@@ -8,6 +8,10 @@ import shopApplicationService from "../services/shopApplication.service";
 import shopService from "../services/shop.service";
 import queryService from "../services/query";
 import { RowDataPacket } from "mysql2";
+import {
+  listShopUtilities,
+  replaceShopUtilities,
+} from "../services/shopUtilities.service";
 
 const shopRequestSchema = z.object({
   full_name: z.string().trim().min(2, "Họ và tên phải có ít nhất 2 ký tự"),
@@ -130,7 +134,6 @@ const shopController = {
     try {
       const userId = (req as any).user?.UserID;
 
-      // Lấy shop code
       const [shopRows] = await queryService.query<RowDataPacket[]>(
         `SELECT ShopCode FROM Shops WHERE UserID = ?`,
         [userId]
@@ -142,7 +145,6 @@ const shopController = {
 
       const shopCode = shopRows[0].ShopCode;
 
-      // Lấy tài khoản ngân hàng
       const [bankAccounts] = await queryService.query<RowDataPacket[]>(
         `SELECT ShopBankID, ShopCode, BankName, AccountNumber, AccountHolder, IsDefault,
                 CreateAt, UpdateAt
@@ -163,6 +165,102 @@ const shopController = {
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
           (error as Error)?.message || "Lỗi lấy danh sách tài khoản ngân hàng"
+        )
+      );
+    }
+  },
+
+  async getUtilities(req: Request, res: Response, next: NextFunction) {
+    try {
+      const shopCode = Number(req.params.shopCode);
+      if (!Number.isFinite(shopCode) || shopCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã shop không hợp lệ")
+        );
+      }
+
+      const [shops] = await queryService.query<RowDataPacket[]>(
+        `SELECT ShopCode FROM Shops WHERE ShopCode = ?`,
+        [shopCode]
+      );
+      if (!shops?.[0]) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
+        );
+      }
+
+      return apiResponse.success(
+        res,
+        await listShopUtilities(shopCode),
+        "Danh sách tiện ích của shop",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Không thể lấy danh sách tiện ích"
+        )
+      );
+    }
+  },
+
+  async updateUtilities(req: Request, res: Response, next: NextFunction) {
+    try {
+      const shopCode = Number(req.params.shopCode);
+      if (!Number.isFinite(shopCode) || shopCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã shop không hợp lệ")
+        );
+      }
+
+      const userId = Number(
+        req.user?.UserID ?? req.user?.user_id ?? req.user?.user_code
+      );
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Vui lòng đăng nhập để tiếp tục"
+          )
+        );
+      }
+
+      const [shops] = await queryService.query<RowDataPacket[]>(
+        `SELECT ShopCode, UserID FROM Shops WHERE ShopCode = ?`,
+        [shopCode]
+      );
+      const shop = shops?.[0];
+      if (!shop) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
+        );
+      }
+
+      if (Number(shop.UserID) !== userId) {
+        return next(
+          new ApiError(
+            StatusCodes.FORBIDDEN,
+            "Bạn không có quyền cập nhật tiện ích cho shop này"
+          )
+        );
+      }
+
+      const utilitiesInput = Array.isArray((req.body as any)?.utilities)
+        ? (req.body as any).utilities.map((item: unknown) => String(item ?? "").trim())
+        : [];
+
+      return apiResponse.success(
+        res,
+        await replaceShopUtilities(shopCode, utilitiesInput),
+        "Cập nhật tiện ích thành công",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Không thể cập nhật tiện ích"
         )
       );
     }

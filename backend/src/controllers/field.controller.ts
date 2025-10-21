@@ -3,10 +3,13 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import fieldService from "../services/field.service";
 import ApiError from "../utils/apiErrors";
-import bookingService from "../services/booking.service";
+import bookingService, {
+  releaseExpiredHeldSlots,
+} from "../services/booking.service";
 import paymentService from "../services/payment.service";
 import { RowDataPacket } from "mysql2";
 import queryService from "../services/query";
+import { listFieldUtilities } from "../services/shopUtilities.service";
 
 const toNumber = (value: unknown) => {
   if (typeof value === "number") return value;
@@ -246,21 +249,8 @@ const fieldController = {
         );
       }
 
-      // Release expired held slots before getting availability
-      try {
-        await queryService.query(
-          `UPDATE Field_Slots 
-           SET Status = 'available', HoldExpiresAt = NULL, UpdateAt = NOW()
-           WHERE FieldCode = ? 
-           AND Status = 'held' 
-           AND HoldExpiresAt IS NOT NULL 
-           AND HoldExpiresAt < NOW()`,
-          [fieldCode]
-        );
-      } catch (e) {
-        console.error("Lỗi release expired held slots:", e);
-        // Không throw, tiếp tục xử lý
-      }
+      // Release expired held slots (cập nhật đầy đủ booking + payment)
+      await releaseExpiredHeldSlots(fieldCode);
 
       const slots = await fieldService.getAvailability(fieldCode, date);
 
@@ -272,6 +262,38 @@ const fieldController = {
       );
     } catch (error) {
       next(error);
+    }
+  },
+
+  async utilities(req: Request, res: Response, next: NextFunction) {
+    try {
+      const fieldCode = Number(req.params.fieldCode);
+      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
+
+      const utilities = await listFieldUtilities(fieldCode);
+
+      return apiResponse.success(
+        res,
+        utilities,
+        "Danh sách tiện ích của sân",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      if ((error as Error)?.message === "FIELD_NOT_FOUND") {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
+        );
+      }
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Không thể lấy tiện ích của sân"
+        )
+      );
     }
   },
 
@@ -291,6 +313,7 @@ const fieldController = {
         total_price,
         notes,
         quantity_id,
+        quantityId: quantityIdCamel,
       } = req.body ?? {};
 
       if (!Array.isArray(slots) || !slots.length) {
@@ -303,10 +326,15 @@ const fieldController = {
       }
 
       // NEW: Extract quantityId and convert to number if provided
-      const quantityId =
+      const rawQuantityInput =
         quantity_id !== undefined && quantity_id !== null
-          ? Number(quantity_id)
+          ? quantity_id
+          : quantityIdCamel !== undefined && quantityIdCamel !== null
+          ? quantityIdCamel
           : undefined;
+
+      const quantityId =
+        rawQuantityInput !== undefined ? Number(rawQuantityInput) : undefined;
 
       const result = await bookingService.confirmFieldBooking(
         fieldCode,
