@@ -45,11 +45,13 @@ export async function listShopUtilities(shopCode: number): Promise<ShopUtilityRo
 
 export async function replaceShopUtilities(shopCode: number, utilityIds: string[]): Promise<ShopUtilityRow[]> {
   await ensureTable();
-  const uniqueIds = Array.from(new Set(
-    utilityIds
-      .map((id) => String(id ?? "").trim())
-      .filter((id) => SHOP_UTILITY_IDS.has(id))
-  ));
+  const uniqueIds = Array.from(
+    new Set(
+      utilityIds
+        .map((id) => String(id ?? "").trim())
+        .filter((id) => id.length > 0 && SHOP_UTILITY_IDS.has(id))
+    )
+  );
 
   await queryService.execTransaction(
     "shopUtilities.replace",

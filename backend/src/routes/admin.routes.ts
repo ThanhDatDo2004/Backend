@@ -14,6 +14,7 @@ router.get("/users", adminController.listUsers);
 router.get("/users/levels", adminController.listUserLevels);
 router.get("/shop-requests", adminController.listShopRequests);
 router.get("/shop-requests/:id", adminController.getShopRequestById);
+router.get("/finance/bookings", adminController.listFinanceBookings);
 router.patch("/users/:id/status", adminController.updateUserStatus);
 router.patch("/shop-requests/:id/status", adminController.updateShopRequestStatus);
 

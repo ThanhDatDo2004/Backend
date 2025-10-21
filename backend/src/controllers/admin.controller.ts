@@ -13,6 +13,40 @@ const updateShopRequestStatusSchema = z.object({
   status: z.enum(["pending", "reviewed", "approved", "rejected"]),
 });
 
+const financeBookingFilterSchema = z.object({
+  startDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu không hợp lệ")
+    .optional(),
+  endDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc không hợp lệ")
+    .optional(),
+  fieldCode: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, "FieldCode phải là số")
+    .optional(),
+  customerUserID: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, "CustomerUserID phải là số")
+    .optional(),
+  bookingStatus: z.string().trim().optional(),
+  limit: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, "Limit phải là số dương")
+    .optional(),
+  offset: z
+    .string()
+    .trim()
+    .regex(/^\d+$/, "Offset phải là số không âm")
+    .optional(),
+});
+
 const adminController = {
   async listShops(req: Request, res: Response, next: NextFunction) {
     try {
@@ -213,6 +247,66 @@ const adminController = {
           (error as Error)?.message || "Không thể cập nhật trạng thái yêu cầu"
         )
       );
+    }
+  },
+
+  async listFinanceBookings(req: Request, res: Response, next: NextFunction) {
+    try {
+      const parsed = financeBookingFilterSchema.safeParse(req.query);
+      if (!parsed.success) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            parsed.error.issues[0]?.message || "Dữ liệu lọc không hợp lệ"
+          )
+        );
+      }
+
+      const {
+        startDate,
+        endDate,
+        fieldCode,
+        customerUserID,
+        bookingStatus,
+        limit,
+        offset,
+      } = parsed.data;
+
+      const numericLimit = Math.min(
+        Math.max(Number(limit ?? 200) || 200, 1),
+        500
+      );
+      const numericOffset = Math.max(Number(offset ?? 0) || 0, 0);
+
+      const numericFieldCode =
+        typeof fieldCode === "string" && fieldCode.length
+          ? Number(fieldCode)
+          : undefined;
+      const numericCustomerUserID =
+        typeof customerUserID === "string" && customerUserID.length
+          ? Number(customerUserID)
+          : undefined;
+
+      const data = await adminService.listFinanceBookings({
+        startDate,
+        endDate,
+        fieldCode: Number.isFinite(numericFieldCode) ? numericFieldCode : undefined,
+        customerUserID: Number.isFinite(numericCustomerUserID)
+          ? numericCustomerUserID
+          : undefined,
+        bookingStatus: bookingStatus?.trim() || undefined,
+        limit: numericLimit,
+        offset: numericOffset,
+      });
+
+      return apiResponse.success(
+        res,
+        data,
+        "Danh sách booking tài chính",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(error);
     }
   },
 };

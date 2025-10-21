@@ -41,6 +41,34 @@ type ShopRequestRow = {
   source: "applications" | "inbox";
 };
 
+type FinanceBookingFilters = {
+  startDate?: string;
+  endDate?: string;
+  fieldCode?: number;
+  customerUserID?: number;
+  bookingStatus?: string;
+  limit: number;
+  offset: number;
+};
+
+type FinanceBookingRow = {
+  booking_code: number;
+  field_code: number;
+  field_name: string | null;
+  customer_user_id: number | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  total_price: number;
+  platform_fee: number;
+  net_to_shop: number;
+  booking_status: string | null;
+  payment_status: string | null;
+  checkin_code: string | null;
+  create_at: string | null;
+  quantity_id: number | null;
+};
+
 const STATUS_MAP: Record<string, "pending" | "reviewed" | "approved" | "rejected"> =
   {
     submitted: "pending",
@@ -335,6 +363,126 @@ const adminService = {
     if (!row) return null;
 
     return mapShopRequestRow(row);
+  },
+
+  async listFinanceBookings(filters: FinanceBookingFilters) {
+    const clauses: string[] = [];
+    const params: any[] = [];
+
+    if (filters.startDate) {
+      clauses.push("b.CreateAt >= ?");
+      params.push(`${filters.startDate} 00:00:00`);
+    }
+
+    if (filters.endDate) {
+      clauses.push("b.CreateAt <= ?");
+      params.push(`${filters.endDate} 23:59:59`);
+    }
+
+    if (filters.fieldCode) {
+      clauses.push("b.FieldCode = ?");
+      params.push(filters.fieldCode);
+    }
+
+    if (filters.customerUserID) {
+      clauses.push("b.CustomerUserID = ?");
+      params.push(filters.customerUserID);
+    }
+
+    if (filters.bookingStatus) {
+      clauses.push("b.BookingStatus = ?");
+      params.push(filters.bookingStatus);
+    }
+
+    const whereClause = clauses.length ? clauses.join(" AND ") : "1=1";
+
+    const items = (await queryService.execQueryList(
+      `SELECT
+         b.BookingCode AS booking_code,
+         b.FieldCode AS field_code,
+         f.FieldName AS field_name,
+         b.CustomerUserID AS customer_user_id,
+         b.CustomerName AS customer_name,
+         b.CustomerEmail AS customer_email,
+         b.CustomerPhone AS customer_phone,
+         b.TotalPrice AS total_price,
+         b.PlatformFee AS platform_fee,
+         b.NetToShop AS net_to_shop,
+         b.BookingStatus AS booking_status,
+         b.PaymentStatus AS payment_status,
+         b.CheckinCode AS checkin_code,
+         DATE_FORMAT(b.CreateAt, '%Y-%m-%d %H:%i:%s') AS create_at,
+         b.QuantityID AS quantity_id
+       FROM Bookings b
+       LEFT JOIN Fields f ON f.FieldCode = b.FieldCode
+       WHERE ${whereClause}
+       ORDER BY b.CreateAt DESC
+       LIMIT ? OFFSET ?`,
+      [...params, filters.limit, filters.offset]
+    )) as FinanceBookingRow[];
+
+    const summaryRows = (await queryService.execQueryList(
+      `SELECT
+         COUNT(*) AS total_records,
+         COALESCE(SUM(b.TotalPrice), 0) AS total_total_price,
+         COALESCE(SUM(b.PlatformFee), 0) AS total_platform_fee,
+         COALESCE(SUM(b.NetToShop), 0) AS total_net_to_shop,
+         COALESCE(SUM(CASE WHEN b.CheckinCode IS NOT NULL AND b.CheckinCode <> '' THEN 1 ELSE 0 END), 0) AS total_checkins,
+         COALESCE(SUM(CASE WHEN b.QuantityID IS NOT NULL THEN 1 ELSE 0 END), 0) AS total_quantity_ids,
+         DATE_FORMAT(MIN(b.CreateAt), '%Y-%m-%d %H:%i:%s') AS first_create_at,
+         DATE_FORMAT(MAX(b.CreateAt), '%Y-%m-%d %H:%i:%s') AS last_create_at
+       FROM Bookings b
+       WHERE ${whereClause}`,
+      params
+    )) as Array<{
+      total_records?: number | null;
+      total_total_price?: number | null;
+      total_platform_fee?: number | null;
+      total_net_to_shop?: number | null;
+      total_checkins?: number | null;
+      total_quantity_ids?: number | null;
+      first_create_at?: string | null;
+      last_create_at?: string | null;
+    }>;
+
+    const summaryRow = summaryRows?.[0] ?? {};
+
+    const mappedItems = items.map((row) => ({
+      booking_code: Number(row.booking_code),
+      field_code: Number(row.field_code),
+      field_name: row.field_name ?? "",
+      customer_user_id:
+        row.customer_user_id !== null ? Number(row.customer_user_id) : null,
+      customer_name: row.customer_name ?? "",
+      customer_email: row.customer_email ?? "",
+      customer_phone: row.customer_phone ?? "",
+      total_price: Number(row.total_price ?? 0),
+      platform_fee: Number(row.platform_fee ?? 0),
+      net_to_shop: Number(row.net_to_shop ?? 0),
+      booking_status: row.booking_status ?? "",
+      payment_status: row.payment_status ?? "",
+      checkin_code: row.checkin_code ?? "",
+      create_at: row.create_at ?? null,
+      quantity_id: row.quantity_id !== null ? Number(row.quantity_id) : null,
+    }));
+
+    return {
+      items: mappedItems,
+      summary: {
+        total_records: Number(summaryRow.total_records ?? 0),
+        total_total_price: Number(summaryRow.total_total_price ?? 0),
+        total_platform_fee: Number(summaryRow.total_platform_fee ?? 0),
+        total_net_to_shop: Number(summaryRow.total_net_to_shop ?? 0),
+        total_checkins: Number(summaryRow.total_checkins ?? 0),
+        total_quantity_ids: Number(summaryRow.total_quantity_ids ?? 0),
+        first_create_at: summaryRow.first_create_at ?? null,
+        last_create_at: summaryRow.last_create_at ?? null,
+      },
+      pagination: {
+        limit: filters.limit,
+        offset: filters.offset,
+      },
+    };
   },
 
   async updateShopRequestStatus(
