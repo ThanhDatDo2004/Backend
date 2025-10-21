@@ -446,7 +446,7 @@ export async function confirmFieldBooking(
 
         // Update Field_Slots (để track sân - giữ nguyên)
         if (quantityId !== null && quantityId !== undefined) {
-          await connection.query<ResultSetHeader>(
+          const [updateResult] = await connection.query<ResultSetHeader>(
             `UPDATE Field_Slots 
              SET Status = 'held',
                  BookingCode = ?,
@@ -469,8 +469,43 @@ export async function confirmFieldBooking(
               quantityId,
             ]
           );
+
+          if ((updateResult?.affectedRows ?? 0) === 0) {
+            await connection.query<ResultSetHeader>(
+              `INSERT INTO Field_Slots (
+                 FieldCode,
+                 QuantityID,
+                 PlayDate,
+                 StartTime,
+                 EndTime,
+                 Status,
+                 BookingCode,
+                 HoldExpiresAt,
+                 CreatedBy,
+                 CreateAt,
+                 UpdateAt
+               )
+               VALUES (?, ?, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
+               ON DUPLICATE KEY UPDATE
+                 Status = 'held',
+                 BookingCode = VALUES(BookingCode),
+                 HoldExpiresAt = VALUES(HoldExpiresAt),
+                 QuantityID = IFNULL(VALUES(QuantityID), QuantityID),
+                 UpdateAt = NOW()`,
+              [
+                fieldCode,
+                quantityId,
+                slot.db_date,
+                slot.db_start_time,
+                slot.db_end_time,
+                bookingCode,
+                holdExpiryTime,
+                payload.created_by ?? null,
+              ]
+            );
+          }
         } else {
-          await connection.query<ResultSetHeader>(
+          const [updateResult] = await connection.query<ResultSetHeader>(
             `UPDATE Field_Slots 
              SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
              WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
@@ -483,6 +518,39 @@ export async function confirmFieldBooking(
               slot.db_end_time,
             ]
           );
+
+          if ((updateResult?.affectedRows ?? 0) === 0) {
+            await connection.query<ResultSetHeader>(
+              `INSERT INTO Field_Slots (
+                 FieldCode,
+                 QuantityID,
+                 PlayDate,
+                 StartTime,
+                 EndTime,
+                 Status,
+                 BookingCode,
+                 HoldExpiresAt,
+                 CreatedBy,
+                 CreateAt,
+                 UpdateAt
+               )
+               VALUES (?, NULL, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
+               ON DUPLICATE KEY UPDATE
+                 Status = 'held',
+                 BookingCode = VALUES(BookingCode),
+                 HoldExpiresAt = VALUES(HoldExpiresAt),
+                 UpdateAt = NOW()`,
+              [
+                fieldCode,
+                slot.db_date,
+                slot.db_start_time,
+                slot.db_end_time,
+                bookingCode,
+                holdExpiryTime,
+                payload.created_by ?? null,
+              ]
+            );
+          }
         }
       }
 
