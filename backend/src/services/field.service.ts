@@ -28,7 +28,7 @@ type ListParams = {
   shopCode?: number | string;
   page?: number;
   pageSize?: number;
-  sortBy?: "price" | "rating" | "name";
+  sortBy?: "price" | "rating" | "name" | "rent";
   sortDir?: "asc" | "desc";
   status?: FieldStatusDb | string;
   shopStatus?: string;

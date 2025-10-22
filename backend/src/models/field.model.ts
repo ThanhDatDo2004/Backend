@@ -16,7 +16,7 @@ export type FieldFilters = {
 };
 
 export type FieldSorting = {
-  sortBy?: "price" | "rating" | "name";
+  sortBy?: "price" | "rating" | "name" | "rent";
   sortDir?: "asc" | "desc";
 };
 
@@ -164,10 +164,10 @@ function buildOrder(sorting: FieldSorting) {
   switch (sorting.sortBy) {
     case "price":
       return `ORDER BY f.DefaultPricePerHour ${dir}`;
-    case "rating":
-      return `ORDER BY average_rating ${dir}`;
     case "name":
       return `ORDER BY f.FieldName ${dir}`;
+    case "rent":
+      return `ORDER BY f.Rent ${dir}, f.FieldName ASC`;
     default:
       return "ORDER BY f.FieldName ASC";
   }

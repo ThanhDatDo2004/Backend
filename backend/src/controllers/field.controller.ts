@@ -51,9 +51,10 @@ const fieldController = {
         shopStatus,
       } = req.query;
 
+      const allowedSorts = new Set(["price", "rating", "name", "rent"]);
       const sortKey =
-        sortBy === "price" || sortBy === "rating" || sortBy === "name"
-          ? sortBy
+        typeof sortBy === "string" && allowedSorts.has(sortBy)
+          ? (sortBy as "price" | "rating" | "name" | "rent")
           : undefined;
       const sortDirection =
         sortDir === "desc" || sortDir === "asc" ? sortDir : undefined;

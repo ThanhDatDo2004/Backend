@@ -135,6 +135,24 @@ export async function handlePaymentSuccess(paymentID: number) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment");
   }
 
+  const [bookingRows] = await queryService.query<RowDataPacket[]>(
+    `SELECT 
+       b.BookingStatus,
+       b.FieldCode,
+       f.ShopCode
+     FROM Bookings b
+     JOIN Fields f ON b.FieldCode = f.FieldCode
+     WHERE b.BookingCode = ?`,
+    [payment.BookingCode]
+  );
+
+  if (!bookingRows?.[0]) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
+  }
+
+  const bookingInfo = bookingRows[0];
+  const wasAlreadyConfirmed = bookingInfo.BookingStatus === "confirmed";
+
   // Cập nhật payment status
   await updatePaymentStatus(paymentID, "paid");
 
@@ -166,20 +184,7 @@ export async function handlePaymentSuccess(paymentID: number) {
   );
 
   // Lấy booking để tính netToShop
-  const [bookingRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT ShopCode FROM (
-       SELECT f.ShopCode FROM Bookings b
-       JOIN Fields f ON b.FieldCode = f.FieldCode
-       WHERE b.BookingCode = ?
-     ) AS booking`,
-    [payment.BookingCode]
-  );
-
-  if (!bookingRows?.[0]) {
-    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
-  }
-
-  const shopCode = bookingRows[0].ShopCode;
+  const shopCode = bookingInfo.ShopCode;
   const fees = calculateFees(payment.Amount);
 
   // Cập nhật wallet shop
@@ -191,6 +196,17 @@ export async function handlePaymentSuccess(paymentID: number) {
        UpdateAt = NOW()`,
     [shopCode, fees.netToShop, fees.netToShop]
   );
+
+  // ✅ Increase field rent only if booking was not confirmed before
+  if (!wasAlreadyConfirmed) {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Fields
+       SET Rent = Rent + 1,
+           UpdateAt = NOW()
+       WHERE FieldCode = ?`,
+      [bookingInfo.FieldCode]
+    );
+  }
 
   // Tạo wallet transaction
   await queryService.query<ResultSetHeader>(

@@ -8,6 +8,22 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+export async function sendMail(
+  to: string,
+  subject: string,
+  html: string,
+  text?: string
+) {
+  const appName = process.env.APP_NAME || "SportBooking";
+  return transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to,
+    subject,
+    html,
+    text,
+  });
+}
+
 export async function sendVerificationEmail(to: string, code: string) {
   const appName = process.env.APP_NAME || "ThueRe";
   const info = await transporter.sendMail({

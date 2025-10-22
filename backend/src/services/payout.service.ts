@@ -3,7 +3,7 @@ import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import authService from "./auth";
-import mailService from "./mail.service";
+import { sendVerificationEmail } from "./mail.service";
 
 /**
  * Tạo yêu cầu rút tiền
@@ -69,19 +69,21 @@ export async function createPayoutRequest(
                  FROM Shop_Bank_Accounts 
                  WHERE ShopBankID = ? AND ShopCode = ?`;
     bankParams = [shopBankID, shopCode];
-    console.log(`[Payout] Looking for SPECIFIC account - bank_id: ${shopBankID}, shopCode: ${shopCode}`);
+    console.log(
+      `[Payout] Looking for SPECIFIC account - bank_id: ${shopBankID}, shopCode: ${shopCode}`
+    );
   }
 
   const [bankRows] = await queryService.query<RowDataPacket[]>(
     bankQuery,
     bankParams
   );
-  
+
   console.log(`[Payout] Bank query result:`, {
-    query: bankQuery.substring(0, 50) + '...',
+    query: bankQuery.substring(0, 50) + "...",
     params: bankParams,
     rowCount: bankRows?.length || 0,
-    data: bankRows?.[0] || null
+    data: bankRows?.[0] || null,
   });
 
   if (!bankRows?.[0]) {
@@ -90,8 +92,11 @@ export async function createPayoutRequest(
       `SELECT ShopBankID, BankName, IsDefault, ShopCode FROM Shop_Bank_Accounts WHERE ShopCode = ?`,
       [shopCode]
     );
-    console.log(`[Payout] All bank accounts for shopCode ${shopCode}:`, allAccounts);
-    
+    console.log(
+      `[Payout] All bank accounts for shopCode ${shopCode}:`,
+      allAccounts
+    );
+
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       "Không tìm thấy tài khoản ngân hàng. Vui lòng chọn hoặc thêm tài khoản."
@@ -166,12 +171,10 @@ export async function createPayoutRequest(
 <p>Vui lòng xác nhận và xử lý yêu cầu này trong admin dashboard.</p>
     `;
 
-    await mailService.sendMail(
-      "kubjmisu1999@gmail.com",
-      `[Yêu Cầu Rút Tiền] ${shop.ShopName} - ${amount.toLocaleString(
-        "vi-VN"
-      )}đ`,
-      emailContent
+    await sendVerificationEmail(
+      "thuere2004@gmail.com",
+      `[Yêu Cầu Rút Tiền] ${shop.ShopName} - ${amount.toLocaleString("vi-VN")}đ`
+      // emailContent
     );
   } catch (e) {
     console.error("Lỗi gửi email:", e);

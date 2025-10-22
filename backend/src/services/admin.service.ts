@@ -69,14 +69,16 @@ type FinanceBookingRow = {
   quantity_id: number | null;
 };
 
-const STATUS_MAP: Record<string, "pending" | "reviewed" | "approved" | "rejected"> =
-  {
-    submitted: "pending",
-    pending: "pending",
-    reviewed: "reviewed",
-    approved: "approved",
-    rejected: "rejected",
-  };
+const STATUS_MAP: Record<
+  string,
+  "pending" | "reviewed" | "approved" | "rejected"
+> = {
+  submitted: "pending",
+  pending: "pending",
+  reviewed: "reviewed",
+  approved: "approved",
+  rejected: "rejected",
+};
 
 const SHOP_LEVEL_FALLBACK = 2;
 
@@ -483,121 +485,123 @@ const adminService = {
     requestId: number,
     status: "pending" | "reviewed" | "approved" | "rejected"
   ) {
-    const updatedRow = await queryService.execTransaction<ShopRequestRow | null>(
-      "update_shop_request_status",
-      async (connection) => {
-        await connection.query(ENSURE_INBOX_TABLE_SQL);
-        try {
-          await connection.query(ENSURE_APPLICATIONS_STATUS_SQL);
-        } catch (error) {
-          // ignore ALTER errors (column already in desired state)
-        }
-
-        const [existingRows] = await connection.query<RowDataPacket[]>(
-          `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
-          [requestId]
-        );
-
-        const existing = (existingRows?.[0] as ShopRequestRow | undefined) ?? null;
-        if (!existing) {
-          return null;
-        }
-
-        const requestEmail = existing.email?.trim() ?? "";
-
-        if (status === "approved") {
-          if (!requestEmail) {
-            throw new Error("SHOP_REQUEST_EMAIL_REQUIRED");
+    const updatedRow =
+      await queryService.execTransaction<ShopRequestRow | null>(
+        "update_shop_request_status",
+        async (connection) => {
+          await connection.query(ENSURE_INBOX_TABLE_SQL);
+          try {
+            await connection.query(ENSURE_APPLICATIONS_STATUS_SQL);
+          } catch (error) {
+            // ignore ALTER errors (column already in desired state)
           }
 
-          const [userRows] = await connection.query<RowDataPacket[]>(
-            `
+          const [existingRows] = await connection.query<RowDataPacket[]>(
+            `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
+            [requestId]
+          );
+
+          const existing =
+            (existingRows?.[0] as ShopRequestRow | undefined) ?? null;
+          if (!existing) {
+            return null;
+          }
+
+          const requestEmail = existing.email?.trim() ?? "";
+
+          if (status === "approved") {
+            if (!requestEmail) {
+              throw new Error("SHOP_REQUEST_EMAIL_REQUIRED");
+            }
+
+            const [userRows] = await connection.query<RowDataPacket[]>(
+              `
               SELECT UserID, LevelCode
               FROM Users
               WHERE LOWER(Email) = LOWER(?)
               LIMIT 1
             `,
-            [requestEmail.toLowerCase()]
-          );
+              [requestEmail.toLowerCase()]
+            );
 
-          const user = userRows?.[0];
-          if (!user) {
-            throw new Error("SHOP_REQUEST_USER_NOT_FOUND");
-          }
+            const user = userRows?.[0];
+            if (!user) {
+              throw new Error("SHOP_REQUEST_USER_NOT_FOUND");
+            }
 
-          const [levelRows] = await connection.query<RowDataPacket[]>(
-            `
+            const [levelRows] = await connection.query<RowDataPacket[]>(
+              `
               SELECT LevelCode
               FROM Users_Level
               WHERE LevelType = 'shop'
               LIMIT 1
             `
-          );
+            );
 
-          const targetLevelCode =
-            Number(levelRows?.[0]?.LevelCode ?? SHOP_LEVEL_FALLBACK) ||
-            SHOP_LEVEL_FALLBACK;
+            const targetLevelCode =
+              Number(levelRows?.[0]?.LevelCode ?? SHOP_LEVEL_FALLBACK) ||
+              SHOP_LEVEL_FALLBACK;
 
-          if (Number(user.LevelCode) !== targetLevelCode) {
-            await connection.query<ResultSetHeader>(
-              `
+            if (Number(user.LevelCode) !== targetLevelCode) {
+              await connection.query<ResultSetHeader>(
+                `
                 UPDATE Users
                 SET LevelCode = ?, UpdateAt = NOW()
                 WHERE UserID = ?
                 LIMIT 1
               `,
-              [targetLevelCode, user.UserID]
-            );
+                [targetLevelCode, user.UserID]
+              );
+            }
           }
-        }
 
-        const [inboxUpdate] = await connection.query<ResultSetHeader>(
-          `
+          const [inboxUpdate] = await connection.query<ResultSetHeader>(
+            `
             UPDATE Shop_Request_Inbox
             SET Status = ?
             WHERE RequestID = ?
           `,
-          [status, requestId]
-        );
+            [status, requestId]
+          );
 
-        if (inboxUpdate.affectedRows > 0) {
+          if (inboxUpdate.affectedRows > 0) {
+            const [rows] = await connection.query<RowDataPacket[]>(
+              `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
+              [requestId]
+            );
+            return (rows?.[0] as ShopRequestRow) ?? null;
+          }
+
+          const statusForApplications =
+            status === "pending" ? "submitted" : status;
+
+          const processedAtExpr =
+            status === "approved" || status === "rejected"
+              ? "NOW()"
+              : status === "pending"
+              ? "NULL"
+              : "ProcessedAt";
+
+          const [appUpdate] = await connection.query<ResultSetHeader>(
+            `
+            UPDATE Shop_Applications
+            SET Status = ?, ProcessedAt = ${processedAtExpr}
+            WHERE RequestID = ?
+          `,
+            [statusForApplications, requestId]
+          );
+
+          if (appUpdate.affectedRows === 0) {
+            return null;
+          }
+
           const [rows] = await connection.query<RowDataPacket[]>(
             `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
             [requestId]
           );
           return (rows?.[0] as ShopRequestRow) ?? null;
         }
-
-        const statusForApplications =
-          status === "pending" ? "submitted" : status;
-
-        const processedAtExpr =
-          status === "approved" || status === "rejected"
-            ? "NOW()"
-            : status === "pending"
-            ? "NULL"
-            : "ProcessedAt";
-
-        const [appUpdate] = await connection.query<ResultSetHeader>(
-          `
-            UPDATE Shop_Applications
-            SET Status = ?, ProcessedAt = ${processedAtExpr}
-            WHERE RequestID = ?
-          `,
-          [statusForApplications, requestId]
-        );
-
-        if (appUpdate.affectedRows === 0) {
-          return null;
-        }
-
-        const [rows] = await connection.query<RowDataPacket[]>(
-          `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
-          [requestId]
-        );
-        return (rows?.[0] as ShopRequestRow) ?? null;
-      }
-    );
+      );
 
     return updatedRow ? mapShopRequestRow(updatedRow) : null;
   },
