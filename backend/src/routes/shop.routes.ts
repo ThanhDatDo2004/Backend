@@ -39,6 +39,7 @@ router.get("/me/promotions", requireAuth, shopPromotionController.listForMe);
 router.post("/me/promotions", requireAuth, shopPromotionController.createForMe);
 router.put("/me/promotions/:promotionId", requireAuth, shopPromotionController.updateForMe);
 router.patch("/me/promotions/:promotionId/status", requireAuth, shopPromotionController.updateStatusForMe);
+router.delete("/me/promotions/:promotionId", requireAuth, shopPromotionController.removeForMe);
 
 // Pricing routes
 router.get("/me/fields/:fieldCode/pricing", requireAuth, pricingController.listOperatingHours);

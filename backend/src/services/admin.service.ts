@@ -38,7 +38,7 @@ type ShopRequestRow = {
   created_at: string | Date | null;
   processed_at: string | Date | null;
   admin_note: string | null;
-  source: "applications" | "inbox";
+  source: "inbox";
 };
 
 type FinanceBookingFilters = {
@@ -95,11 +95,6 @@ const ENSURE_INBOX_TABLE_SQL = `
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `;
 
-const ENSURE_APPLICATIONS_STATUS_SQL = `
-  ALTER TABLE Shop_Applications
-  MODIFY COLUMN Status ENUM('submitted','reviewed','approved','rejected') DEFAULT 'submitted'
-`;
-
 const COMBINED_SHOP_REQUESTS_QUERY = `
   SELECT
     request_id,
@@ -114,21 +109,6 @@ const COMBINED_SHOP_REQUESTS_QUERY = `
     admin_note,
     source
   FROM (
-    SELECT
-      r.RequestID AS request_id,
-      COALESCE(u.FullName, r.ShopName) AS full_name,
-      r.Email AS email,
-      r.PhoneNumber AS phone_number,
-      r.Address AS address,
-      r.AdminNote AS message,
-      r.Status AS status,
-      r.CreateAt AS created_at,
-      r.ProcessedAt AS processed_at,
-      r.AdminNote AS admin_note,
-      'applications' AS source
-    FROM Shop_Applications r
-    LEFT JOIN Users u ON u.UserID = r.ApplicantUserID
-    UNION ALL
     SELECT
       inbox.RequestID AS request_id,
       inbox.FullName AS full_name,
@@ -490,12 +470,6 @@ const adminService = {
         "update_shop_request_status",
         async (connection) => {
           await connection.query(ENSURE_INBOX_TABLE_SQL);
-          try {
-            await connection.query(ENSURE_APPLICATIONS_STATUS_SQL);
-          } catch (error) {
-            // ignore ALTER errors (column already in desired state)
-          }
-
           const [existingRows] = await connection.query<RowDataPacket[]>(
             `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
             [requestId]
@@ -572,34 +546,7 @@ const adminService = {
             return (rows?.[0] as ShopRequestRow) ?? null;
           }
 
-          const statusForApplications =
-            status === "pending" ? "submitted" : status;
-
-          const processedAtExpr =
-            status === "approved" || status === "rejected"
-              ? "NOW()"
-              : status === "pending"
-              ? "NULL"
-              : "ProcessedAt";
-
-          const [appUpdate] = await connection.query<ResultSetHeader>(
-            `
-            UPDATE Shop_Applications
-            SET Status = ?, ProcessedAt = ${processedAtExpr}
-            WHERE RequestID = ?
-          `,
-            [statusForApplications, requestId]
-          );
-
-          if (appUpdate.affectedRows === 0) {
-            return null;
-          }
-
-          const [rows] = await connection.query<RowDataPacket[]>(
-            `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? LIMIT 1`,
-            [requestId]
-          );
-          return (rows?.[0] as ShopRequestRow) ?? null;
+          return null;
         }
       );
 

@@ -528,6 +528,35 @@ const shopPromotionService = {
       shop_code: Number(record.ShopCode),
     };
   },
+
+  async remove(shopCode: number, promotionId: number) {
+    const record = await ensurePromotion(shopCode, promotionId);
+    const [usageRows] = await queryService.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM Bookings WHERE PromotionID = ?`,
+      [promotionId]
+    );
+    const totalUsage = Number(usageRows?.[0]?.cnt ?? 0);
+    if (totalUsage > 0) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Không thể xóa khuyến mãi đã liên kết với các đơn đặt sân."
+      );
+    }
+
+    const [result] = await queryService.query<ResultSetHeader>(
+      `DELETE FROM Shop_Promotions WHERE ShopCode = ? AND PromotionID = ? LIMIT 1`,
+      [shopCode, promotionId]
+    );
+
+    if ((result.affectedRows ?? 0) === 0) {
+      throw new ApiError(
+        StatusCodes.NOT_FOUND,
+        "Không tìm thấy chiến dịch khuyến mãi"
+      );
+    }
+
+    return true;
+  },
 };
 
 export default shopPromotionService;

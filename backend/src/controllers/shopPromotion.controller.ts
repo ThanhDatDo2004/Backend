@@ -303,6 +303,22 @@ const shopPromotionController = {
       next(error);
     }
   },
+
+  async removeForMe(req: Request, res: Response, next: NextFunction) {
+    try {
+      const shopCode = await resolveShopCode(req);
+      const promotionId = parsePromotionId(req);
+      await shopPromotionService.remove(shopCode, promotionId);
+      return apiResponse.success(
+        res,
+        { promotionId },
+        "Đã xóa khuyến mãi",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 export default shopPromotionController;
