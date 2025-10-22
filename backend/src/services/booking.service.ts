@@ -3,6 +3,9 @@ import { PoolConnection } from "mysql2/promise";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/apiErrors";
 import queryService from "./query";
+import shopPromotionService, {
+  type ShopPromotion,
+} from "./shopPromotion.service";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
@@ -25,6 +28,8 @@ export type ConfirmBookingPayload = {
   };
   notes?: string;
   created_by?: number | null;
+  promotion_code?: string;
+  promotionCode?: string;
 };
 
 type NormalizedSlot = {
@@ -53,6 +58,10 @@ export type ConfirmBookingResult = {
   qr_code: string;
   paymentID: number;
   amount: number;
+  amount_before_discount: number;
+  discount_amount: number;
+  promotion_code?: string | null;
+  promotion_title?: string | null;
   slots: Array<{
     slot_id: number;
     play_date: string;
@@ -135,6 +144,19 @@ function normalizeSlots(slots: BookingSlotInput[]): NormalizedSlot[] {
       return a.play_date.localeCompare(b.play_date);
     }
     return a.db_start_time.localeCompare(b.db_start_time);
+  });
+}
+
+function distributeAmountAcrossSlots(total: number, count: number): number[] {
+  if (!Number.isFinite(total) || count <= 0) {
+    return Array.from({ length: Math.max(0, count) }, () => 0);
+  }
+  const totalCents = Math.round(total * 100);
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents - base * count;
+  return Array.from({ length: count }, (_value, index) => {
+    const cents = base + (index < remainder ? 1 : 0);
+    return cents / 100;
   });
 }
 
@@ -392,9 +414,19 @@ export async function confirmFieldBooking(
 
   const normalizedSlots = normalizeSlots(payload.slots);
 
+  const promotionInputRaw =
+    typeof payload.promotion_code === "string" && payload.promotion_code.trim()
+      ? payload.promotion_code.trim()
+      : typeof payload.promotionCode === "string" && payload.promotionCode.trim()
+      ? payload.promotionCode.trim()
+      : undefined;
+  const promotionCode = promotionInputRaw
+    ? promotionInputRaw.toUpperCase()
+    : undefined;
+
   // Lấy field info để tính giá
   const [fieldRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT FieldCode, DefaultPricePerHour FROM Fields WHERE FieldCode = ?`,
+    `SELECT FieldCode, ShopCode, DefaultPricePerHour FROM Fields WHERE FieldCode = ?`,
     [fieldCode]
   );
 
@@ -403,10 +435,157 @@ export async function confirmFieldBooking(
   }
 
   const field = fieldRows[0];
-  const pricePerSlot = field.DefaultPricePerHour || 100000;
-  const totalPrice = pricePerSlot * normalizedSlots.length;  // Multiply by number of slots
-  const platformFee = Math.round(totalPrice * 0.05);
-  const netToShop = totalPrice - platformFee;
+  const shopCode = Number(field.ShopCode ?? 0);
+  const slotCount = normalizedSlots.length;
+  const basePricePerSlot = field.DefaultPricePerHour || 100000;
+  const baseTotalPrice = basePricePerSlot * slotCount;
+
+  let finalTotalPrice = baseTotalPrice;
+  let discountAmount = 0;
+  let appliedPromotion: ShopPromotion | null = null;
+  const userIdForUsage = Number(payload.created_by);
+
+  if (promotionCode) {
+    const promotion = await shopPromotionService.getByCode(promotionCode);
+    if (Number(promotion.shop_code) !== shopCode) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Mã khuyến mãi không áp dụng cho sân này."
+      );
+    }
+
+    const now = Date.now();
+    const startAtMs = new Date(promotion.start_at).getTime();
+    const endAtMs = new Date(promotion.end_at).getTime();
+
+    if (Number.isNaN(startAtMs) || Number.isNaN(endAtMs)) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Thời gian áp dụng khuyến mãi không hợp lệ."
+      );
+    }
+
+    if (promotion.status === "disabled" || promotion.current_status === "disabled") {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Khuyến mãi này đã bị tạm dừng."
+      );
+    }
+
+    if (now < startAtMs) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Khuyến mãi này chưa đến thời gian áp dụng."
+      );
+    }
+
+    if (now > endAtMs || promotion.status === "expired" || promotion.current_status === "expired") {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Khuyến mãi này đã hết hạn."
+      );
+    }
+
+    if (promotion.status === "draft") {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Khuyến mãi này chưa được kích hoạt."
+      );
+    }
+
+    if (
+      promotion.min_order_amount !== null &&
+      promotion.min_order_amount > baseTotalPrice
+    ) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Đơn hàng chưa đạt giá trị tối thiểu để dùng khuyến mãi."
+      );
+    }
+
+    if (Number.isFinite(userIdForUsage) && promotion.usage_per_customer) {
+      const [usageRows] = await queryService.query<RowDataPacket[]>(
+        `SELECT 
+           SUM(CASE WHEN CustomerUserID = ? THEN 1 ELSE 0 END) AS CustomerUsage,
+           COUNT(*) AS TotalUsage
+         FROM Bookings
+         WHERE PromotionID = ?
+           AND BookingStatus IN ('pending','confirmed','completed')`,
+        [Number(userIdForUsage), promotion.promotion_id]
+      );
+
+      const totalUsage = Number(usageRows?.[0]?.TotalUsage ?? 0);
+      const customerUsage = Number(usageRows?.[0]?.CustomerUsage ?? 0);
+
+      if (
+        promotion.usage_limit !== null &&
+        promotion.usage_limit >= 0 &&
+        totalUsage >= promotion.usage_limit
+      ) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Mã khuyến mãi đã đạt giới hạn sử dụng."
+        );
+      }
+
+      if (
+        promotion.usage_per_customer !== null &&
+        promotion.usage_per_customer > 0 &&
+        customerUsage >= promotion.usage_per_customer
+      ) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Bạn đã sử dụng mã khuyến mãi này đủ số lần cho phép."
+        );
+      }
+    } else if (
+      promotion.usage_limit !== null &&
+      promotion.usage_limit >= 0
+    ) {
+      const [usageRows] = await queryService.query<RowDataPacket[]>(
+        `SELECT COUNT(*) AS TotalUsage
+         FROM Bookings
+         WHERE PromotionID = ?
+           AND BookingStatus IN ('pending','confirmed','completed')`,
+        [promotion.promotion_id]
+      );
+      const totalUsage = Number(usageRows?.[0]?.TotalUsage ?? 0);
+      if (totalUsage >= promotion.usage_limit) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Mã khuyến mãi đã đạt giới hạn sử dụng."
+        );
+      }
+    }
+
+    let computedDiscount = 0;
+    if (promotion.discount_type === "percent") {
+      computedDiscount = (baseTotalPrice * promotion.discount_value) / 100;
+      if (
+        promotion.max_discount_amount !== null &&
+        promotion.max_discount_amount >= 0
+      ) {
+        computedDiscount = Math.min(
+          computedDiscount,
+          promotion.max_discount_amount
+        );
+      }
+    } else {
+      computedDiscount = promotion.discount_value;
+    }
+
+    computedDiscount = Math.min(computedDiscount, baseTotalPrice);
+    computedDiscount = Math.round(computedDiscount * 100) / 100;
+
+    finalTotalPrice = Math.max(baseTotalPrice - computedDiscount, 0);
+    finalTotalPrice = Math.round(finalTotalPrice * 100) / 100;
+    discountAmount = computedDiscount;
+    appliedPromotion = promotion;
+  }
+
+  const slotPrices = distributeAmountAcrossSlots(finalTotalPrice, slotCount);
+  const platformFee = Math.round(finalTotalPrice * 0.05);
+  const netToShop = finalTotalPrice - platformFee;
 
   let bookingCode: number = 0;
 
@@ -416,7 +595,8 @@ export async function confirmFieldBooking(
       // 1. Xử lý slots (lock, update, insert)
       const updatedSlots: ConfirmBookingResult["slots"] = [];
 
-      for (const slot of normalizedSlots) {
+      for (let index = 0; index < normalizedSlots.length; index += 1) {
+        const slot = normalizedSlots[index];
         const row = await lockSlot(
           connection,
           fieldCode,
@@ -488,12 +668,15 @@ export async function confirmFieldBooking(
           TotalPrice,
           PlatformFee,
           NetToShop,
+          DiscountAmount,
+          PromotionID,
+          PromotionCode,
           CheckinCode,
           BookingStatus,
           PaymentStatus,
           CreateAt,
           UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
         [
           fieldCode,
           quantityId ?? null,
@@ -501,9 +684,12 @@ export async function confirmFieldBooking(
           payload.customer?.name || null,
           payload.customer?.email || null,
           payload.customer?.phone || null,
-          totalPrice,
+          finalTotalPrice,
           platformFee,
           netToShop,
+          discountAmount,
+          appliedPromotion?.promotion_id ?? null,
+          appliedPromotion?.promotion_code ?? null,
           checkinCode,
         ]
       );
@@ -512,10 +698,11 @@ export async function confirmFieldBooking(
 
       // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
       const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
-      for (const slot of normalizedSlots) {
+      for (let index = 0; index < normalizedSlots.length; index += 1) {
+        const slot = normalizedSlots[index];
         // Insert vào Booking_Slots
         await connection.query<ResultSetHeader>(
-          `INSERT INTO Booking_Slots (
+        `INSERT INTO Booking_Slots (
             BookingCode,
             FieldCode,
             QuantityID,
@@ -534,7 +721,7 @@ export async function confirmFieldBooking(
             slot.db_date,
             slot.db_start_time,
             slot.db_end_time,
-            pricePerSlot
+            slotPrices[index] ?? basePricePerSlot
           ]
         );
 
@@ -681,7 +868,7 @@ export async function confirmFieldBooking(
       PaymentStatus,
       CreateAt
     ) VALUES (?, ?, ?, ?, 'pending', NOW())`,
-    [bookingCode, adminBankID, paymentMethod, totalPrice]
+    [bookingCode, adminBankID, paymentMethod, finalTotalPrice]
   );
 
   const paymentID = (paymentResult as any).insertId;
@@ -693,7 +880,7 @@ export async function confirmFieldBooking(
   const qrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(
     sepayAcc
   )}&bank=${encodeURIComponent(sepayBank)}&amount=${encodeURIComponent(
-    totalPrice
+    finalTotalPrice
   )}&des=${encodeURIComponent(des)}`;
 
   return {
@@ -703,7 +890,11 @@ export async function confirmFieldBooking(
     field_code: fieldCode,
     qr_code: qrUrl,
     paymentID: paymentID,
-    amount: totalPrice,
+    amount: finalTotalPrice,
+    amount_before_discount: baseTotalPrice,
+    discount_amount: discountAmount,
+    promotion_code: appliedPromotion?.promotion_code ?? null,
+    promotion_title: appliedPromotion?.title ?? null,
     slots: result,
   };
 }

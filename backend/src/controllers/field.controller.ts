@@ -26,6 +26,14 @@ const queryString = (value: unknown): string | undefined => {
     : undefined;
 };
 
+const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
+  const raw = Number(process.env.GUEST_CUSTOMER_USER_ID ?? 1);
+  if (Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  return 1;
+})();
+
 const fieldController = {
   async list(req: Request, res: Response, next: NextFunction) {
     try {
@@ -284,9 +292,7 @@ const fieldController = {
       );
     } catch (error) {
       if ((error as Error)?.message === "FIELD_NOT_FOUND") {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
-        );
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
       }
       next(
         new ApiError(
@@ -306,16 +312,6 @@ const fieldController = {
         );
       }
 
-      const userId = Number((req as any).user?.UserID);
-      if (!Number.isFinite(userId) || userId <= 0) {
-        return next(
-          new ApiError(
-            StatusCodes.UNAUTHORIZED,
-            "Không xác định được người dùng tạo booking"
-          )
-        );
-      }
-
       const {
         slots,
         customer,
@@ -324,6 +320,8 @@ const fieldController = {
         notes,
         quantity_id,
         quantityId: quantityIdCamel,
+        promotion_code: promotionCodeSnake,
+        promotionCode: promotionCodeCamel,
       } = req.body ?? {};
 
       if (!Array.isArray(slots) || !slots.length) {
@@ -331,6 +329,42 @@ const fieldController = {
           new ApiError(
             StatusCodes.BAD_REQUEST,
             "Vui lòng chọn ít nhất một khung giờ để đặt sân."
+          )
+        );
+      }
+
+      const authUserId = Number((req as any).user?.UserID);
+      const bodyCreatedBy =
+        req.body?.created_by ??
+        req.body?.createdBy ??
+        req.body?.customerUserID ??
+        req.body?.customer_user_id;
+      const parsedBodyUserId =
+        typeof bodyCreatedBy === "number" || typeof bodyCreatedBy === "string"
+          ? Number(bodyCreatedBy)
+          : undefined;
+
+      let resolvedUserId: number | undefined;
+      if (Number.isFinite(authUserId) && authUserId > 0) {
+        resolvedUserId = authUserId;
+      } else if (
+        typeof parsedBodyUserId === "number" &&
+        Number.isFinite(parsedBodyUserId) &&
+        parsedBodyUserId > 0
+      ) {
+        resolvedUserId = parsedBodyUserId;
+      } else if (
+        Number.isFinite(DEFAULT_GUEST_CUSTOMER_USER_ID) &&
+        DEFAULT_GUEST_CUSTOMER_USER_ID > 0
+      ) {
+        resolvedUserId = DEFAULT_GUEST_CUSTOMER_USER_ID;
+      }
+
+      if (!resolvedUserId || !Number.isFinite(resolvedUserId)) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Không xác định được người đặt sân hợp lệ."
           )
         );
       }
@@ -346,6 +380,13 @@ const fieldController = {
       const quantityId =
         rawQuantityInput !== undefined ? Number(rawQuantityInput) : undefined;
 
+      const promotionCodeInput =
+        typeof promotionCodeSnake === "string" && promotionCodeSnake.trim()
+          ? promotionCodeSnake.trim()
+          : typeof promotionCodeCamel === "string" && promotionCodeCamel.trim()
+          ? promotionCodeCamel.trim()
+          : undefined;
+
       const result = await bookingService.confirmFieldBooking(
         fieldCode,
         {
@@ -356,7 +397,11 @@ const fieldController = {
           total_price:
             typeof total_price === "number" ? total_price : undefined,
           notes: typeof notes === "string" ? notes : undefined,
-          created_by: userId,
+          created_by: resolvedUserId,
+          promotion_code:
+            typeof promotionCodeInput === "string"
+              ? promotionCodeInput.toUpperCase()
+              : undefined,
         },
         quantityId // NEW: Pass quantityId
       );
@@ -368,6 +413,10 @@ const fieldController = {
           qr_code: result.qr_code,
           paymentID: result.paymentID,
           amount: result.amount,
+          amountBeforeDiscount: result.amount_before_discount,
+          discountAmount: result.discount_amount,
+          promotionCode: result.promotion_code,
+          promotionTitle: result.promotion_title,
           transaction_id: result.transaction_id,
           payment_status: result.payment_status,
           payment_method:

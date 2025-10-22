@@ -6,8 +6,9 @@ import paymentController from "../controllers/payment.controller";
 import payoutController from "../controllers/payout.controller";
 import walletController from "../controllers/wallet.controller";
 import { fieldImagesUpload } from "../middlewares/upload.middleware";
-import { requireAuth } from "../middlewares/auth.middleware";
+import { optionalAuth, requireAuth } from "../middlewares/auth.middleware";
 import bookingController from "../controllers/booking.controller";
+import shopPromotionController from "../controllers/shopPromotion.controller";
 
 const router = express.Router();
 
@@ -20,6 +21,11 @@ router.put("/me", requireAuth, shopController.updateMe);
 router.get("/me/fields", requireAuth, shopFieldController.listForMe);
 router.get("/me/fields/:fieldCode", requireAuth, shopFieldController.getForMe);
 router.post("/me/fields", requireAuth, fieldImagesUpload, shopFieldController.createForMe);
+router.get(
+  "/:shopCode/promotions/active",
+  optionalAuth,
+  shopPromotionController.listActive
+);
 router.get("/:shopCode/utilities", shopController.getUtilities);
 router.post("/:shopCode/utilities", requireAuth, shopController.updateUtilities);
 router.get("/:shopCode/fields", shopFieldController.list);
@@ -27,6 +33,12 @@ router.post("/:shopCode/fields", fieldImagesUpload, shopFieldController.create);
 router.put("/me/fields/:fieldCode", requireAuth, fieldImagesUpload, shopFieldController.updateForMe);
 router.put("/:shopCode/fields/:fieldCode", requireAuth, fieldImagesUpload, shopFieldController.update);
 router.delete("/me/fields/:fieldCode", requireAuth, shopFieldController.removeForMe);
+
+// Promotions routes
+router.get("/me/promotions", requireAuth, shopPromotionController.listForMe);
+router.post("/me/promotions", requireAuth, shopPromotionController.createForMe);
+router.put("/me/promotions/:promotionId", requireAuth, shopPromotionController.updateForMe);
+router.patch("/me/promotions/:promotionId/status", requireAuth, shopPromotionController.updateStatusForMe);
 
 // Pricing routes
 router.get("/me/fields/:fieldCode/pricing", requireAuth, pricingController.listOperatingHours);

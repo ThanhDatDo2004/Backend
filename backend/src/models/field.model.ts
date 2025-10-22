@@ -87,7 +87,6 @@ const BASE_SELECT = `
     f.DefaultPricePerHour AS price_per_hour,
     f.Status AS status,
     f.Rent AS rent,
-    COALESCE(AVG(r.Rating), 0) AS average_rating,
     s.ShopName AS shop_name,
     s.Address AS shop_address,
     s.UserID AS shop_user_id,
@@ -95,7 +94,7 @@ const BASE_SELECT = `
   FROM Fields f
   JOIN Shops s ON s.ShopCode = f.ShopCode
   JOIN Users u ON u.UserID = s.UserID
-  LEFT JOIN Reviews r ON r.FieldCode = f.FieldCode
+  
 `;
 
 function buildWhere(filters: FieldFilters) {
@@ -588,24 +587,23 @@ const fieldModel = {
     );
   },
 
-  async listReviews(fieldCodes: number[]) {
-    if (!fieldCodes.length) return [];
-    const query = `
-      SELECT
-        r.ReviewCode AS review_code,
-        r.FieldCode AS field_code,
-        r.Rating AS rating,
-        r.Comment AS comment,
-        r.CreateAt AS created_at,
-        r.CustomerUserID AS customer_user_id,
-        u.FullName AS customer_name
-      FROM Reviews r
-      LEFT JOIN Users u ON u.UserID = r.CustomerUserID
-      WHERE r.FieldCode IN (?)
-      ORDER BY r.FieldCode, r.CreateAt DESC, r.ReviewCode DESC
-    `;
-    return await queryService.execQueryList(query, [fieldCodes]);
-  },
+  // async listReviews(fieldCodes: number[]) {
+  //   if (!fieldCodes.length) return [];
+  //   const query = `
+  //     SELECT
+  //       r.ReviewCode AS review_code,
+  //       r.FieldCode AS field_code,
+  //       r.Comment AS comment,
+  //       r.CreateAt AS created_at,
+  //       r.CustomerUserID AS customer_user_id,
+  //       u.FullName AS customer_name
+  //     FROM Reviews r
+  //     LEFT JOIN Users u ON u.UserID = r.CustomerUserID
+  //     WHERE r.FieldCode IN (?)
+  //     ORDER BY r.FieldCode, r.CreateAt DESC, r.ReviewCode DESC
+  //   `;
+  //   return await queryService.execQueryList(query, [fieldCodes]);
+  // },
 
   async insertField(
     conn: PoolConnection,

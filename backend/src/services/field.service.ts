@@ -14,7 +14,6 @@ import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import localUploadService from "./localUpload.service";
 import fieldQuantityService from "./fieldQuantity.service";
-import url from "url";
 import path from "path";
 
 type FieldStatusDb = "active" | "maintenance" | "inactive";
@@ -238,9 +237,9 @@ function mapSlotRow(slot: FieldSlotRow) {
     if (Date.now() > holdExpiryEpochMs) {
       status = "available";
     }
-  } else if (status === "held" && slot.hold_expires_at) {
+  } else if (status === "held" && (slot as any).hold_expires_at) {
     // fallback for legacy string
-    const holdExpiryTime = new Date(slot.hold_expires_at);
+    const holdExpiryTime = new Date((slot as any).hold_expires_at);
     if (Date.now() > holdExpiryTime.getTime()) {
       status = "available";
     }
@@ -250,21 +249,22 @@ function mapSlotRow(slot: FieldSlotRow) {
     slot_id: slot.slot_id,
     field_code: slot.field_code,
     quantity_id: slot.quantity_id ?? null,
-    quantity_number: slot.quantity_number ?? null,
+    quantity_number: (slot as any).quantity_number ?? null,
     play_date: slot.play_date,
     start_time: slot.start_time,
     end_time: slot.end_time,
     status: status,
-    hold_expires_at: slot.hold_expires_at,
+    hold_expires_at: (slot as any).hold_expires_at,
     hold_expires_at_ts:
       holdExpiryEpochMs ??
-      (slot.hold_expires_at
-        ? Math.floor(new Date(slot.hold_expires_at).getTime() / 1000)
+      ((slot as any).hold_expires_at
+        ? Math.floor(new Date((slot as any).hold_expires_at).getTime() / 1000)
         : null),
     is_available: status === "available",
     update_at_ts:
-      typeof slot.update_at_ts === "number" && !Number.isNaN(slot.update_at_ts)
-        ? slot.update_at_ts
+      typeof (slot as any).update_at_ts === "number" &&
+      !Number.isNaN((slot as any).update_at_ts)
+        ? (slot as any).update_at_ts
         : null,
   };
 }
@@ -446,17 +446,10 @@ const fieldService = {
         const parsed = new URL(imageUrl);
         const host = (parsed.host || parsed.hostname || "").toLowerCase();
         if (host.includes("amazonaws.com") || host.includes("s3")) {
-          // Guess bucket and key from url
           // Formats supported: https://{bucket}.s3.{region}.amazonaws.com/{key}
-          // or custom CDN where key starts after the bucket base path isn't derivable -> skip
           const pathname = parsed.pathname.replace(/^\/+/, "");
           const hostParts = parsed.hostname.split(".");
           const bucketCandidate = hostParts[0];
-          const regionCandidate = hostParts.includes("amazonaws")
-            ? hostParts.find(
-                (p) => p && p !== "s3" && p !== "amazonaws" && p !== "com"
-              )
-            : undefined;
           if (bucketCandidate && pathname) {
             deletions.push(
               s3Service
@@ -1035,9 +1028,8 @@ const fieldService = {
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {
     if (!rows.length) return [];
     const fieldCodes = rows.map((row) => row.field_code);
-    const [images, reviews, quantities] = await Promise.all([
+    const [images, quantities] = await Promise.all([
       fieldModel.listImages(fieldCodes),
-      fieldModel.listReviews(fieldCodes),
       fieldQuantityService.getMultipleFieldQuantities(fieldCodes),
     ]);
 
@@ -1052,20 +1044,6 @@ const fieldService = {
         is_primary: Number(img.sort_order ?? 0) === 0 ? 1 : 0,
       });
       imagesByField.set(img.field_code, entry);
-    });
-
-    const reviewsByField = new Map<number, any[]>();
-    reviews.forEach((rev: any) => {
-      const entry = reviewsByField.get(rev.field_code) ?? [];
-      entry.push({
-        review_code: rev.review_code,
-        field_code: rev.field_code,
-        customer_name: rev.customer_name ?? "Ẩn danh",
-        rating: Number(rev.rating ?? 0),
-        comment: rev.comment ?? "",
-        created_at: rev.created_at,
-      });
-      reviewsByField.set(rev.field_code, entry);
     });
 
     const quantitiesByField = new Map<number, any[]>();
@@ -1097,7 +1075,8 @@ const fieldService = {
         bank_name: "",
         isapproved: row.shop_is_approved === "Y" ? 1 : 0,
       },
-      reviews: reviewsByField.get(row.field_code) ?? [],
+      // Reviews đã loại bỏ khỏi hệ thống
+      reviews: [],
       averageRating: Number(row.average_rating ?? 0),
       quantities: quantitiesByField.get(row.field_code) ?? [],
     }));

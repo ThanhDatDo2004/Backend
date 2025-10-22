@@ -2,7 +2,7 @@ import express from "express";
 import fieldController from "../controllers/field.controller";
 import bookingController from "../controllers/booking.controller";
 import reviewController from "../controllers/review.controller";
-import { requireAuth } from "../middlewares/auth.middleware";
+import { optionalAuth, requireAuth } from "../middlewares/auth.middleware";
 import { fieldImagesUpload } from "../middlewares/upload.middleware";
 
 const router = express.Router();
@@ -13,7 +13,7 @@ router.get("/:fieldCode/availability", fieldController.availability);
 router.get("/:fieldCode/utilities", fieldController.utilities);
 router.post(
   "/:fieldCode/bookings/confirm",
-  requireAuth,
+  optionalAuth,
   fieldController.confirmBooking
 );
 router.get("/:fieldCode", fieldController.detail);

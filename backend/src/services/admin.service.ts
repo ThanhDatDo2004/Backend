@@ -172,8 +172,6 @@ const adminService = {
           u.LevelCode AS level_code,
           u.FullName AS full_name,
           u.Email AS email,
-          u.PhoneNumber AS phone_number,
-          u.Password AS legacy_password,
           u.PasswordHash AS password_hash,
           u.IsActive AS is_active
         FROM Users u
@@ -215,8 +213,6 @@ const adminService = {
           u.LevelCode AS level_code,
           u.FullName AS full_name,
           u.Email AS email,
-          u.PhoneNumber AS phone_number,
-          u.Password AS legacy_password,
           u.PasswordHash AS password_hash,
           u.IsActive AS is_active
         FROM Users u
@@ -249,8 +245,6 @@ const adminService = {
           u.LevelCode AS level_code,
           u.FullName AS full_name,
           u.Email AS email,
-          u.PhoneNumber AS phone_number,
-          u.Password AS legacy_password,
           u.PasswordHash AS password_hash,
           u.IsActive AS is_active
         FROM Users u
