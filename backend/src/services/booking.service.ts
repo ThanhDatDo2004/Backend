@@ -468,7 +468,13 @@ export async function confirmFieldBooking(
       }
 
       // 2. Tạo booking thực vào DB - CHỈ lưu thông tin chung (không lưu time)
-      const userID = payload.created_by || 1;
+      const userID = Number(payload.created_by);
+      if (!Number.isFinite(userID) || userID <= 0) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Người tạo booking không hợp lệ."
+        );
+      }
       const checkinCode = generateCheckinCode();
 
       const [bookingResult] = await connection.query<ResultSetHeader>(

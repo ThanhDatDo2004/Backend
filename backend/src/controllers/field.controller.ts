@@ -306,6 +306,16 @@ const fieldController = {
         );
       }
 
+      const userId = Number((req as any).user?.UserID);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Không xác định được người dùng tạo booking"
+          )
+        );
+      }
+
       const {
         slots,
         customer,
@@ -346,6 +356,7 @@ const fieldController = {
           total_price:
             typeof total_price === "number" ? total_price : undefined,
           notes: typeof notes === "string" ? notes : undefined,
+          created_by: userId,
         },
         quantityId // NEW: Pass quantityId
       );

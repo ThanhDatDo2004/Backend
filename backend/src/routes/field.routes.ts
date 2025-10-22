@@ -11,7 +11,11 @@ const router = express.Router();
 router.get("/", fieldController.list);
 router.get("/:fieldCode/availability", fieldController.availability);
 router.get("/:fieldCode/utilities", fieldController.utilities);
-router.post("/:fieldCode/bookings/confirm", fieldController.confirmBooking);
+router.post(
+  "/:fieldCode/bookings/confirm",
+  requireAuth,
+  fieldController.confirmBooking
+);
 router.get("/:fieldCode", fieldController.detail);
 
 // Field images endpoints

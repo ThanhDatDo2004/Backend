@@ -2,9 +2,9 @@
 const authQueries = {
   // Lấy thông tin đăng nhập (Users: PascalCase)
   getUserAuth: `
-    SELECT UserID, LevelCode, FullName, Email, PhoneNumber, PasswordHash, IsActive, _destroy
+    SELECT UserID, LevelCode, FullName, Email, PasswordHash, IsActive, _destroy
     FROM Users
-    WHERE Email = ? OR PhoneNumber = ?
+    WHERE Email = ?
     LIMIT 1
   `,
 
@@ -31,8 +31,8 @@ const authQueries = {
       FullName,
       PasswordHash,
       Email,
-      PhoneNumber,
-      Password,
+      FirstLogin,
+      
       IsActive,
       _destroy
     ) VALUES (
@@ -40,12 +40,15 @@ const authQueries = {
       ?,      -- FullName
       ?,      -- PasswordHash
       ?,      -- Email
-      NULL,   -- PhoneNumber (nullable)
-      NULL,   -- Password (plaintext - không dùng, để NULL)
       1,      -- IsActive
+      1,      -- FirstLogin
       0       -- _destroy
     )
   `,
+  // Password,
+  // PhoneNumber,
+  // NULL,   -- PhoneNumber (nullable)
+  //     NULL,   -- Password (plaintext - không dùng, để NULL)
 
   // OTP / mã xác thực email (Users_Verification: PascalCase chuẩn)
   insertVerifyCode: `
