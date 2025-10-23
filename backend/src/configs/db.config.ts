@@ -11,7 +11,7 @@ const pool: Pool = createPool({
   connectionLimit: 10,
   queueLimit: 0,
   enableKeepAlive: true,
-  connectionTimeout: 30000,
+  connectTimeout: 30000,
   charset: "UTF8MB4_UNICODE_CI",
 });
 

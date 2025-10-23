@@ -6,6 +6,8 @@ import queryService from "./query";
 import shopPromotionService, {
   type ShopPromotion,
 } from "./shopPromotion.service";
+import bookingModel from "../models/booking.model";
+import paymentModel from "../models/payment.model";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
@@ -229,7 +231,7 @@ async function updateExistingSlot(
       `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được giữ cho sân khác.`
     );
   }
-  
+
   // Check if slot is available OR if it's held but expired
   if (row.Status === "held" && row.HoldExpiresAt) {
     const holdExpiryTime = new Date(row.HoldExpiresAt);
@@ -285,7 +287,14 @@ async function insertNewSlot(
       ON DUPLICATE KEY UPDATE
         SlotID = LAST_INSERT_ID(SlotID)
     `,
-    [fieldCode, quantityId || null, slot.db_date, slot.db_start_time, slot.db_end_time, createdBy]
+    [
+      fieldCode,
+      quantityId || null,
+      slot.db_date,
+      slot.db_start_time,
+      slot.db_end_time,
+      createdBy,
+    ]
   );
 
   return Number(result.insertId);
@@ -296,34 +305,8 @@ type ExpiredSlot = {
   bookingCode: number | null;
 };
 
-async function getExpiredHeldSlots(
-  fieldCode?: number
-): Promise<ExpiredSlot[]> {
-  const params: Array<number> = [];
-  let clause = `
-    Status = 'held'
-    AND HoldExpiresAt IS NOT NULL
-    AND HoldExpiresAt <= NOW()
-  `;
-  if (fieldCode) {
-    clause += " AND FieldCode = ?";
-    params.push(fieldCode);
-  }
-
-  const rows = (await queryService.execQueryList(
-    `SELECT SlotID, BookingCode
-     FROM Field_Slots
-     WHERE ${clause}`,
-    params
-  )) as Array<{ SlotID: number; BookingCode: number | null }>;
-
-  return rows.map((row) => ({
-    slotId: Number(row.SlotID),
-    bookingCode:
-      row.BookingCode !== null && row.BookingCode !== undefined
-        ? Number(row.BookingCode)
-        : null,
-  }));
+async function getExpiredHeldSlots(fieldCode?: number): Promise<ExpiredSlot[]> {
+  return await bookingModel.getExpiredHeldSlots(fieldCode);
 }
 
 async function cancelExpiredBookings(expiredSlots: ExpiredSlot[]) {
@@ -332,44 +315,14 @@ async function cancelExpiredBookings(expiredSlots: ExpiredSlot[]) {
       expiredSlots
         .map((slot) => slot.bookingCode)
         .filter(
-          (code): code is number =>
-            Number.isFinite(code) && Number(code) > 0
+          (code): code is number => Number.isFinite(code) && Number(code) > 0
         )
     )
   );
 
   if (!bookingCodes.length) return;
 
-  await queryService.query<ResultSetHeader>(
-    `UPDATE Booking_Slots
-     SET Status = 'cancelled',
-         UpdateAt = NOW()
-     WHERE Status = 'pending'
-       AND BookingCode IN (?)`,
-    [bookingCodes]
-  );
-
-  await queryService.query<ResultSetHeader>(
-    `UPDATE Bookings
-     SET BookingStatus = 'cancelled',
-         PaymentStatus = CASE
-           WHEN PaymentStatus = 'paid' THEN PaymentStatus
-           ELSE 'failed'
-         END,
-         UpdateAt = NOW()
-     WHERE BookingStatus = 'pending'
-       AND BookingCode IN (?)`,
-    [bookingCodes]
-  );
-
-  await queryService.query<ResultSetHeader>(
-    `UPDATE Payments_Admin
-     SET PaymentStatus = 'failed',
-         UpdateAt = NOW()
-     WHERE PaymentStatus = 'pending'
-       AND BookingCode IN (?)`,
-    [bookingCodes]
-  );
+  await bookingModel.cancelExpiredBookings(bookingCodes);
 }
 
 export async function releaseExpiredHeldSlots(fieldCode: number) {
@@ -385,17 +338,9 @@ export async function releaseExpiredHeldSlots(fieldCode: number) {
 
     if (!slotIds.length) return;
 
-    await queryService.query<ResultSetHeader>(
-      `UPDATE Field_Slots 
-       SET Status = 'available',
-           BookingCode = NULL,
-           HoldExpiresAt = NULL,
-           UpdateAt = NOW()
-       WHERE SlotID IN (?)`,
-      [slotIds]
-    );
+    await bookingModel.releaseHeldSlotsByIds(slotIds);
   } catch (e) {
-    console.error('Lỗi release expired held slots:', e);
+    console.error("Lỗi release expired held slots:", e);
     // Không throw, tiếp tục xử lý
   }
 }
@@ -417,7 +362,8 @@ export async function confirmFieldBooking(
   const promotionInputRaw =
     typeof payload.promotion_code === "string" && payload.promotion_code.trim()
       ? payload.promotion_code.trim()
-      : typeof payload.promotionCode === "string" && payload.promotionCode.trim()
+      : typeof payload.promotionCode === "string" &&
+        payload.promotionCode.trim()
       ? payload.promotionCode.trim()
       : undefined;
   const promotionCode = promotionInputRaw
@@ -425,16 +371,13 @@ export async function confirmFieldBooking(
     : undefined;
 
   // Lấy field info để tính giá
-  const [fieldRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT FieldCode, ShopCode, DefaultPricePerHour FROM Fields WHERE FieldCode = ?`,
-    [fieldCode]
-  );
+  const fieldInfo = await bookingModel.getFieldInfo(fieldCode);
 
-  if (!fieldRows?.[0]) {
+  if (!fieldInfo) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân.");
   }
 
-  const field = fieldRows[0];
+  const field = fieldInfo;
   const shopCode = Number(field.ShopCode ?? 0);
   const slotCount = normalizedSlots.length;
   const basePricePerSlot = field.DefaultPricePerHour || 100000;
@@ -465,7 +408,10 @@ export async function confirmFieldBooking(
       );
     }
 
-    if (promotion.status === "disabled" || promotion.current_status === "disabled") {
+    if (
+      promotion.status === "disabled" ||
+      promotion.current_status === "disabled"
+    ) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
         "Khuyến mãi này đã bị tạm dừng."
@@ -479,11 +425,12 @@ export async function confirmFieldBooking(
       );
     }
 
-    if (now > endAtMs || promotion.status === "expired" || promotion.current_status === "expired") {
-      throw new ApiError(
-        StatusCodes.BAD_REQUEST,
-        "Khuyến mãi này đã hết hạn."
-      );
+    if (
+      now > endAtMs ||
+      promotion.status === "expired" ||
+      promotion.current_status === "expired"
+    ) {
+      throw new ApiError(StatusCodes.BAD_REQUEST, "Khuyến mãi này đã hết hạn.");
     }
 
     if (promotion.status === "draft") {
@@ -504,23 +451,15 @@ export async function confirmFieldBooking(
     }
 
     if (Number.isFinite(userIdForUsage) && promotion.usage_per_customer) {
-      const [usageRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT 
-           SUM(CASE WHEN CustomerUserID = ? THEN 1 ELSE 0 END) AS CustomerUsage,
-           COUNT(*) AS TotalUsage
-         FROM Bookings
-         WHERE PromotionID = ?
-           AND BookingStatus IN ('pending','confirmed','completed')`,
-        [Number(userIdForUsage), promotion.promotion_id]
+      const usage = await bookingModel.checkPromotionUsageByUser(
+        promotion.promotion_id,
+        userIdForUsage
       );
-
-      const totalUsage = Number(usageRows?.[0]?.TotalUsage ?? 0);
-      const customerUsage = Number(usageRows?.[0]?.CustomerUsage ?? 0);
 
       if (
         promotion.usage_limit !== null &&
         promotion.usage_limit >= 0 &&
-        totalUsage >= promotion.usage_limit
+        usage.totalUsage >= promotion.usage_limit
       ) {
         throw new ApiError(
           StatusCodes.BAD_REQUEST,
@@ -531,25 +470,17 @@ export async function confirmFieldBooking(
       if (
         promotion.usage_per_customer !== null &&
         promotion.usage_per_customer > 0 &&
-        customerUsage >= promotion.usage_per_customer
+        usage.customerUsage >= promotion.usage_per_customer
       ) {
         throw new ApiError(
           StatusCodes.BAD_REQUEST,
           "Bạn đã sử dụng mã khuyến mãi này đủ số lần cho phép."
         );
       }
-    } else if (
-      promotion.usage_limit !== null &&
-      promotion.usage_limit >= 0
-    ) {
-      const [usageRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS TotalUsage
-         FROM Bookings
-         WHERE PromotionID = ?
-           AND BookingStatus IN ('pending','confirmed','completed')`,
-        [promotion.promotion_id]
+    } else if (promotion.usage_limit !== null && promotion.usage_limit >= 0) {
+      const totalUsage = await bookingModel.checkPromotionTotalUsage(
+        promotion.promotion_id
       );
-      const totalUsage = Number(usageRows?.[0]?.TotalUsage ?? 0);
       if (totalUsage >= promotion.usage_limit) {
         throw new ApiError(
           StatusCodes.BAD_REQUEST,
@@ -605,12 +536,7 @@ export async function confirmFieldBooking(
         );
 
         if (row) {
-          await updateExistingSlot(
-            connection,
-            row,
-            slot,
-            quantityId ?? null
-          );
+          await updateExistingSlot(connection, row, slot, quantityId ?? null);
           const resolvedQuantityId =
             row.QuantityID !== null && row.QuantityID !== undefined
               ? Number(row.QuantityID)
@@ -702,7 +628,7 @@ export async function confirmFieldBooking(
         const slot = normalizedSlots[index];
         // Insert vào Booking_Slots
         await connection.query<ResultSetHeader>(
-        `INSERT INTO Booking_Slots (
+          `INSERT INTO Booking_Slots (
             BookingCode,
             FieldCode,
             QuantityID,
@@ -721,7 +647,7 @@ export async function confirmFieldBooking(
             slot.db_date,
             slot.db_start_time,
             slot.db_end_time,
-            slotPrices[index] ?? basePricePerSlot
+            slotPrices[index] ?? basePricePerSlot,
           ]
         );
 
@@ -843,35 +769,27 @@ export async function confirmFieldBooking(
   const transactionId = generateTransactionId();
 
   // Tạo payment record
-  const [bankRows] = await queryService.query<RowDataPacket[]>(
-    `SELECT AdminBankID FROM Admin_Bank_Accounts WHERE IsDefault = 'Y' LIMIT 1`,
-    []
-  );
+  const bankAccount = await paymentModel.getDefaultAdminBank();
 
-  if (!bankRows?.[0]) {
+  if (!bankAccount) {
     throw new ApiError(
       StatusCodes.NOT_FOUND,
       "Chưa setup tài khoản ngân hàng admin"
     );
   }
 
-  const adminBankID = bankRows[0].AdminBankID;
+  const adminBankID = bankAccount.AdminBankID;
   const paymentMethod = "bank_transfer";
 
   // Tạo payment
-  const [paymentResult] = await queryService.query<ResultSetHeader>(
-    `INSERT INTO Payments_Admin (
-      BookingCode,
-      AdminBankID,
-      PaymentMethod,
-      Amount,
-      PaymentStatus,
-      CreateAt
-    ) VALUES (?, ?, ?, ?, 'pending', NOW())`,
-    [bookingCode, adminBankID, paymentMethod, finalTotalPrice]
+  const payment = await paymentModel.create(
+    bookingCode,
+    finalTotalPrice,
+    adminBankID,
+    paymentMethod
   );
 
-  const paymentID = (paymentResult as any).insertId;
+  const paymentID = payment.PaymentID;
 
   // Build SePay QR URL
   const sepayAcc = process.env.SEPAY_ACC || "96247THUERE";
@@ -912,20 +830,10 @@ export async function cleanupExpiredHeldSlots() {
 
     if (!slotIds.length) return;
 
-    await queryService.query<ResultSetHeader>(
-      `UPDATE Field_Slots 
-       SET Status = 'available',
-           BookingCode = NULL,
-           HoldExpiresAt = NULL,
-           UpdateAt = NOW()
-       WHERE SlotID IN (?)`,
-      [slotIds]
-    );
-    console.log(
-      `Đã giải phóng ${slotIds.length} khung giờ giữ chỗ hết hạn.`
-    );
+    await bookingModel.releaseHeldSlotsByIds(slotIds);
+    console.log(`Đã giải phóng ${slotIds.length} khung giờ giữ chỗ hết hạn.`);
   } catch (e) {
-    console.error('Lỗi xóa khung giờ đã hết hạn:', e);
+    console.error("Lỗi xóa khung giờ đã hết hạn:", e);
   }
 }
 

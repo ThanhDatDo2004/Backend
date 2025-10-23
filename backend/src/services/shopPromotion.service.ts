@@ -1,7 +1,7 @@
-import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/apiErrors";
 import queryService from "./query";
+import shopPromotionModel from "../models/shopPromotion.model";
 
 export type ShopPromotionStatus =
   | "draft"
@@ -94,11 +94,12 @@ function computeCurrentStatus(
   return "active";
 }
 
-function mapRow(row: RowDataPacket): ShopPromotion {
+function mapRow(row: any): ShopPromotion {
   const startAt = new Date(row.StartAt);
   const endAt = new Date(row.EndAt);
-  const storedStatus = (row.Status ??
-    "draft") as ShopPromotionStatus | undefined;
+  const storedStatus = (row.Status ?? "draft") as
+    | ShopPromotionStatus
+    | undefined;
   const resolvedStatus = STATUS_VALUES.includes(storedStatus || "draft")
     ? (storedStatus as ShopPromotionStatus)
     : "draft";
@@ -141,35 +142,6 @@ function mapRow(row: RowDataPacket): ShopPromotion {
   };
 }
 
-async function ensurePromotion(
-  shopCode: number,
-  promotionId: number
-): Promise<RowDataPacket> {
-  const [rows] = await queryService.query<RowDataPacket[]>(
-    `SELECT p.*,
-            COALESCE(b.TotalUsage, 0) AS UsageCount
-     FROM Shop_Promotions p
-     LEFT JOIN (
-       SELECT PromotionID, COUNT(*) AS TotalUsage
-       FROM Bookings
-       WHERE PromotionID = ? AND BookingStatus IN ('pending','confirmed','completed')
-       GROUP BY PromotionID
-     ) b ON b.PromotionID = p.PromotionID
-     WHERE p.ShopCode = ? AND p.PromotionID = ?
-     LIMIT 1`,
-    [promotionId, shopCode, promotionId]
-  );
-
-  const record = rows?.[0];
-  if (!record) {
-    throw new ApiError(
-      StatusCodes.NOT_FOUND,
-      "Không tìm thấy chiến dịch khuyến mãi"
-    );
-  }
-  return record;
-}
-
 function resolveStatus(
   payloadStatus: ShopPromotionStatus | undefined,
   startAt: Date,
@@ -210,30 +182,18 @@ function sanitizePayload(payload: ShopPromotionPayload) {
 
 const shopPromotionService = {
   async list(shopCode: number): Promise<ShopPromotion[]> {
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT p.*,
-              COALESCE(b.TotalUsage, 0) AS UsageCount
-       FROM Shop_Promotions p
-       LEFT JOIN (
-         SELECT PromotionID, COUNT(*) AS TotalUsage
-         FROM Bookings
-         WHERE BookingStatus IN ('pending','confirmed','completed')
-           AND PromotionID IS NOT NULL
-         GROUP BY PromotionID
-       ) b ON b.PromotionID = p.PromotionID
-       WHERE p.ShopCode = ?
-       ORDER BY p.CreateAt DESC`,
-      [shopCode]
-    );
-
+    const rows = await shopPromotionModel.listByShop(shopCode);
     return (rows || []).map(mapRow);
   },
 
-  async getById(
-    shopCode: number,
-    promotionId: number
-  ): Promise<ShopPromotion> {
-    const row = await ensurePromotion(shopCode, promotionId);
+  async getById(shopCode: number, promotionId: number): Promise<ShopPromotion> {
+    const row = await shopPromotionModel.getById(shopCode, promotionId);
+    if (!row) {
+      throw new ApiError(
+        StatusCodes.NOT_FOUND,
+        "Không tìm thấy chiến dịch khuyến mãi"
+      );
+    }
     return mapRow(row);
   },
 
@@ -246,57 +206,34 @@ const shopPromotionService = {
     const insertId = await queryService.execTransaction(
       "shopPromotion.create",
       async (conn) => {
-        const [dupRows] = await conn.query<RowDataPacket[]>(
-          `SELECT PromotionID
-           FROM Shop_Promotions
-           WHERE ShopCode = ? AND PromotionCode = ?
-           LIMIT 1`,
-          [shopCode, sanitized.promotion_code]
+        const codeExists = await shopPromotionModel.codeExists(
+          conn,
+          shopCode,
+          sanitized.promotion_code
         );
-        if (dupRows?.[0]) {
+        if (codeExists) {
           throw new ApiError(
             StatusCodes.CONFLICT,
             "Mã khuyến mãi đã tồn tại, vui lòng chọn mã khác"
           );
         }
 
-        const [result] = await conn.query<ResultSetHeader>(
-          `INSERT INTO Shop_Promotions (
-              ShopCode,
-              PromotionCode,
-              Title,
-              Description,
-              DiscountType,
-              DiscountValue,
-              MaxDiscountAmount,
-              MinOrderAmount,
-              UsageLimit,
-              UsagePerCustomer,
-              StartAt,
-              EndAt,
-              Status,
-              CreateAt,
-              UpdateAt
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-          [
-            shopCode,
-            sanitized.promotion_code,
-            sanitized.title,
-            sanitized.description ?? null,
-            sanitized.discount_type,
-            sanitized.discount_value,
-            sanitized.max_discount_amount ?? null,
-            sanitized.min_order_amount ?? 0,
-            sanitized.usage_limit ?? null,
-            sanitized.usage_per_customer ?? 1,
-            toMySqlDatetime(sanitized.start_at),
-            toMySqlDatetime(sanitized.end_at),
-            sanitized.status,
-          ]
-        );
+        const promotionId = await shopPromotionModel.create(conn, shopCode, {
+          promotion_code: sanitized.promotion_code,
+          title: sanitized.title,
+          description: sanitized.description ?? null,
+          discount_type: sanitized.discount_type,
+          discount_value: sanitized.discount_value,
+          max_discount_amount: sanitized.max_discount_amount ?? null,
+          min_order_amount: sanitized.min_order_amount ?? 0,
+          usage_limit: sanitized.usage_limit ?? null,
+          usage_per_customer: sanitized.usage_per_customer ?? 1,
+          start_at: toMySqlDatetime(sanitized.start_at),
+          end_at: toMySqlDatetime(sanitized.end_at),
+          status: sanitized.status,
+        });
 
-        return result.insertId;
+        return promotionId;
       }
     );
 
@@ -310,75 +247,45 @@ const shopPromotionService = {
   ): Promise<ShopPromotion> {
     const sanitized = sanitizePayload(payload);
 
-    await queryService.execTransaction(
-      "shopPromotion.update",
-      async (conn) => {
-        const [existingRows] = await conn.query<RowDataPacket[]>(
-          `SELECT PromotionID, PromotionCode
-           FROM Shop_Promotions
-           WHERE ShopCode = ? AND PromotionID = ?
-           LIMIT 1`,
-          [shopCode, promotionId]
-        );
-        const existing = existingRows?.[0];
-        if (!existing) {
-          throw new ApiError(
-            StatusCodes.NOT_FOUND,
-            "Không tìm thấy chiến dịch khuyến mãi"
-          );
-        }
-
-        if (existing.PromotionCode !== sanitized.promotion_code) {
-          const [dupRows] = await conn.query<RowDataPacket[]>(
-            `SELECT PromotionID
-             FROM Shop_Promotions
-             WHERE ShopCode = ? AND PromotionCode = ? AND PromotionID <> ?
-             LIMIT 1`,
-            [shopCode, sanitized.promotion_code, promotionId]
-          );
-          if (dupRows?.[0]) {
-            throw new ApiError(
-              StatusCodes.CONFLICT,
-              "Mã khuyến mãi đã tồn tại, vui lòng chọn mã khác"
-            );
-          }
-        }
-
-        await conn.query<ResultSetHeader>(
-          `UPDATE Shop_Promotions
-             SET PromotionCode = ?,
-                 Title = ?,
-                 Description = ?,
-                 DiscountType = ?,
-                 DiscountValue = ?,
-                 MaxDiscountAmount = ?,
-                 MinOrderAmount = ?,
-                 UsageLimit = ?,
-                 UsagePerCustomer = ?,
-                 StartAt = ?,
-                 EndAt = ?,
-                 Status = ?,
-                 UpdateAt = NOW()
-           WHERE ShopCode = ? AND PromotionID = ?`,
-          [
-            sanitized.promotion_code,
-            sanitized.title,
-            sanitized.description ?? null,
-            sanitized.discount_type,
-            sanitized.discount_value,
-            sanitized.max_discount_amount ?? null,
-            sanitized.min_order_amount ?? 0,
-            sanitized.usage_limit ?? null,
-            sanitized.usage_per_customer ?? 1,
-            toMySqlDatetime(sanitized.start_at),
-            toMySqlDatetime(sanitized.end_at),
-            sanitized.status,
-            shopCode,
-            promotionId,
-          ]
+    await queryService.execTransaction("shopPromotion.update", async (conn) => {
+      const existing = await shopPromotionModel.getById(shopCode, promotionId);
+      if (!existing) {
+        throw new ApiError(
+          StatusCodes.NOT_FOUND,
+          "Không tìm thấy chiến dịch khuyến mãi"
         );
       }
-    );
+
+      if (existing.PromotionCode !== sanitized.promotion_code) {
+        const codeExists = await shopPromotionModel.codeExists(
+          conn,
+          shopCode,
+          sanitized.promotion_code,
+          promotionId
+        );
+        if (codeExists) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            "Mã khuyến mãi đã tồn tại, vui lòng chọn mã khác"
+          );
+        }
+      }
+
+      await shopPromotionModel.update(conn, shopCode, promotionId, {
+        promotion_code: sanitized.promotion_code,
+        title: sanitized.title,
+        description: sanitized.description ?? null,
+        discount_type: sanitized.discount_type,
+        discount_value: sanitized.discount_value,
+        max_discount_amount: sanitized.max_discount_amount ?? null,
+        min_order_amount: sanitized.min_order_amount ?? 0,
+        usage_limit: sanitized.usage_limit ?? null,
+        usage_per_customer: sanitized.usage_per_customer ?? 1,
+        start_at: toMySqlDatetime(sanitized.start_at),
+        end_at: toMySqlDatetime(sanitized.end_at),
+        status: sanitized.status,
+      });
+    });
 
     return this.getById(shopCode, promotionId);
   },
@@ -395,7 +302,14 @@ const shopPromotionService = {
       );
     }
 
-    const record = await ensurePromotion(shopCode, promotionId);
+    const record = await shopPromotionModel.getById(shopCode, promotionId);
+    if (!record) {
+      throw new ApiError(
+        StatusCodes.NOT_FOUND,
+        "Không tìm thấy chiến dịch khuyến mãi"
+      );
+    }
+
     const startAt = new Date(record.StartAt);
     const endAt = new Date(record.EndAt);
     const currentStatus = computeCurrentStatus(
@@ -413,10 +327,7 @@ const shopPromotionService = {
         );
       }
       if (now > endAt) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "Chiến dịch đã hết hạn"
-        );
+        throw new ApiError(StatusCodes.BAD_REQUEST, "Chiến dịch đã hết hạn");
       }
     }
 
@@ -427,12 +338,7 @@ const shopPromotionService = {
       );
     }
 
-    await queryService.query<ResultSetHeader>(
-      `UPDATE Shop_Promotions
-       SET Status = ?, UpdateAt = NOW()
-       WHERE ShopCode = ? AND PromotionID = ?`,
-      [status, shopCode, promotionId]
-    );
+    await shopPromotionModel.updateStatus(shopCode, promotionId, status);
 
     return this.getById(shopCode, promotionId);
   },
@@ -441,41 +347,9 @@ const shopPromotionService = {
     shopCode: number,
     customerUserId?: number | null
   ): Promise<Array<ShopPromotion & { customer_usage?: number }>> {
-    const params: Array<number> = [];
-    let customerJoin = "";
-    if (Number.isFinite(customerUserId) && (customerUserId ?? 0) > 0) {
-      customerJoin = `LEFT JOIN (
-                SELECT PromotionID, COUNT(*) AS CustomerUsage
-                FROM Bookings
-                WHERE BookingStatus IN ('pending','confirmed','completed')
-                  AND PromotionID IS NOT NULL
-                  AND CustomerUserID = ?
-                GROUP BY PromotionID
-              ) c ON c.PromotionID = p.PromotionID`;
-      params.push(Number(customerUserId));
-    }
-
-    params.push(shopCode);
-
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT p.*,
-              COALESCE(b.TotalUsage, 0) AS UsageCount,
-              ${customerJoin ? "COALESCE(c.CustomerUsage, 0)" : "0"} AS CustomerUsage
-       FROM Shop_Promotions p
-       LEFT JOIN (
-         SELECT PromotionID, COUNT(*) AS TotalUsage
-         FROM Bookings
-         WHERE BookingStatus IN ('pending','confirmed','completed')
-           AND PromotionID IS NOT NULL
-         GROUP BY PromotionID
-       ) b ON b.PromotionID = p.PromotionID
-       ${customerJoin}
-       WHERE p.ShopCode = ?
-         AND p.Status NOT IN ('draft','disabled')
-         AND p.StartAt <= NOW()
-         AND p.EndAt >= NOW()
-       ORDER BY p.EndAt ASC`,
-      params
+    const rows = await shopPromotionModel.getActiveForShop(
+      shopCode,
+      customerUserId
     );
 
     return (rows || []).map((row) => {
@@ -501,23 +375,7 @@ const shopPromotionService = {
       );
     }
 
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT p.*,
-              COALESCE(b.TotalUsage, 0) AS UsageCount
-       FROM Shop_Promotions p
-       LEFT JOIN (
-         SELECT PromotionID, COUNT(*) AS TotalUsage
-         FROM Bookings
-         WHERE BookingStatus IN ('pending','confirmed','completed')
-           AND PromotionID IS NOT NULL
-         GROUP BY PromotionID
-       ) b ON b.PromotionID = p.PromotionID
-       WHERE p.PromotionCode = ?
-       LIMIT 1`,
-      [normalized]
-    );
-
-    const record = rows?.[0];
+    const record = await shopPromotionModel.getByCode(normalized);
     if (!record) {
       throw new ApiError(StatusCodes.NOT_FOUND, "Mã khuyến mãi không tồn tại");
     }
@@ -530,12 +388,15 @@ const shopPromotionService = {
   },
 
   async remove(shopCode: number, promotionId: number) {
-    const record = await ensurePromotion(shopCode, promotionId);
-    const [usageRows] = await queryService.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM Bookings WHERE PromotionID = ?`,
-      [promotionId]
-    );
-    const totalUsage = Number(usageRows?.[0]?.cnt ?? 0);
+    const record = await shopPromotionModel.getById(shopCode, promotionId);
+    if (!record) {
+      throw new ApiError(
+        StatusCodes.NOT_FOUND,
+        "Không tìm thấy chiến dịch khuyến mãi"
+      );
+    }
+
+    const totalUsage = await shopPromotionModel.checkUsage(promotionId);
     if (totalUsage > 0) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
@@ -543,12 +404,9 @@ const shopPromotionService = {
       );
     }
 
-    const [result] = await queryService.query<ResultSetHeader>(
-      `DELETE FROM Shop_Promotions WHERE ShopCode = ? AND PromotionID = ? LIMIT 1`,
-      [shopCode, promotionId]
-    );
+    const deleted = await shopPromotionModel.delete(shopCode, promotionId);
 
-    if ((result.affectedRows ?? 0) === 0) {
+    if (!deleted) {
       throw new ApiError(
         StatusCodes.NOT_FOUND,
         "Không tìm thấy chiến dịch khuyến mãi"

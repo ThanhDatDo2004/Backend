@@ -587,23 +587,7 @@ const fieldModel = {
     );
   },
 
-  // async listReviews(fieldCodes: number[]) {
-  //   if (!fieldCodes.length) return [];
-  //   const query = `
-  //     SELECT
-  //       r.ReviewCode AS review_code,
-  //       r.FieldCode AS field_code,
-  //       r.Comment AS comment,
-  //       r.CreateAt AS created_at,
-  //       r.CustomerUserID AS customer_user_id,
-  //       u.FullName AS customer_name
-  //     FROM Reviews r
-  //     LEFT JOIN Users u ON u.UserID = r.CustomerUserID
-  //     WHERE r.FieldCode IN (?)
-  //     ORDER BY r.FieldCode, r.CreateAt DESC, r.ReviewCode DESC
-  //   `;
-  //   return await queryService.execQueryList(query, [fieldCodes]);
-  // },
+ 
 
   async insertField(
     conn: PoolConnection,

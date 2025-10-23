@@ -1,95 +1,13 @@
+import shopModel from "../models/shop.model";
 import queryService from "./query";
 
 const shopService = {
   async getByUserId(userId: number) {
-    if (!Number.isFinite(userId)) return null;
-    const rows = await queryService.execQueryList(
-      `
-        SELECT
-          s.ShopCode AS shop_code,
-          s.UserID AS user_id,
-          s.ShopName AS shop_name,
-          s.Address AS address,
-          s.IsApproved AS is_approved,
-          s.CreateAt AS created_at,
-          s.UpdateAt AS updated_at,
-          s.ApprovedAt AS approved_at,
-          COALESCE(sb.AccountNumber, '') AS bank_account_number,
-          COALESCE(sb.BankName, '') AS bank_name,
-          COALESCE(sw.Balance, 0) AS wallet_balance,
-          (SELECT COUNT(*) FROM Fields WHERE ShopCode = s.ShopCode) AS field_count,
-          (SELECT COUNT(*) FROM Bookings b JOIN Fields f ON b.FieldCode = f.FieldCode WHERE f.ShopCode = s.ShopCode) AS booking_count
-        FROM Shops s
-        LEFT JOIN Shop_Bank_Accounts sb
-          ON sb.ShopCode = s.ShopCode
-         AND (sb.IsDefault = 'Y' OR sb.IsDefault IS NULL)
-        LEFT JOIN Shop_Wallets sw ON sw.ShopCode = s.ShopCode
-        WHERE s.UserID = ?
-        ORDER BY s.ShopCode ASC
-        LIMIT 1
-      `,
-      [userId]
-    );
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      shop_code: Number(row.shop_code),
-      user_code: Number(row.user_id),
-      shop_name: row.shop_name ?? "",
-      address: row.address ?? "",
-      bank_account_number: row.bank_account_number ?? "",
-      bank_name: row.bank_name ?? "",
-      isapproved: row.is_approved === "Y" ? 1 : 0,
-      created_at: row.created_at ?? null,
-      updated_at: row.updated_at ?? null,
-      approved_at: row.approved_at ?? null,
-      wallet_balance: Number(row.wallet_balance ?? 0),
-      field_count: Number(row.field_count ?? 0),
-      booking_count: Number(row.booking_count ?? 0),
-    };
+    return await shopModel.getByUserId(userId);
   },
 
   async getByCode(shopCode: number) {
-    if (!Number.isFinite(shopCode)) return null;
-    const rows = await queryService.execQueryList(
-      `
-        SELECT
-          s.ShopCode AS shop_code,
-          s.UserID AS user_id,
-          s.ShopName AS shop_name,
-          s.Address AS address,
-          s.IsApproved AS is_approved,
-          s.CreateAt AS created_at,
-          s.UpdateAt AS updated_at,
-          s.ApprovedAt AS approved_at,
-          COALESCE(
-            sb.AccountNumber,
-            ''
-          ) AS bank_account_number,
-          COALESCE(sb.BankName, '') AS bank_name
-        FROM Shops s
-        LEFT JOIN Shop_Bank_Accounts sb
-          ON sb.ShopCode = s.ShopCode
-         AND (sb.IsDefault = 'Y' OR sb.IsDefault IS NULL)
-        WHERE s.ShopCode = ?
-        LIMIT 1
-      `,
-      [shopCode]
-    );
-    const row = rows[0];
-    if (!row) return null;
-    return {
-      shop_code: Number(row.shop_code),
-      user_code: Number(row.user_id),
-      shop_name: row.shop_name ?? "",
-      address: row.address ?? "",
-      bank_account_number: row.bank_account_number ?? "",
-      bank_name: row.bank_name ?? "",
-      isapproved: row.is_approved === "Y" ? 1 : 0,
-      created_at: row.created_at ?? null,
-      updated_at: row.updated_at ?? null,
-      approved_at: row.approved_at ?? null,
-    };
+    return await shopModel.getByCode(shopCode);
   },
 
   async updateByUserId(
@@ -103,43 +21,29 @@ const shopService = {
     }
   ) {
     if (!Number.isFinite(userId)) return null;
+
     const result = await queryService.execTransaction(
       "shopService.updateByUserId",
       async (conn) => {
-        const [shopRows] = await conn.query(
-          `
-            SELECT ShopCode
-            FROM Shops
-            WHERE UserID = ?
-            LIMIT 1
-          `,
-          [userId]
-        );
-        let shopCode = Number(
-          (shopRows as Array<{ ShopCode: number }>)?.[0]?.ShopCode ?? 0
-        );
+        let shopCode = await shopModel.getShopCodeByUserId(userId);
 
         // If no existing shop, create new one
         if (!shopCode) {
-          const [insertRes] = await conn.query(
-            `
-              INSERT INTO Shops (UserID, ShopName, Address, IsApproved, CreateAt, UpdateAt)
-              VALUES (?, ?, ?, 'Y', NOW(), NOW())
-            `,
-            [userId, payload.shop_name.trim(), payload.address.trim()]
+          shopCode = await shopModel.createShop(
+            conn,
+            userId,
+            payload.shop_name,
+            payload.address
           );
-          // mysql2 ResultSetHeader
-          shopCode = Number((insertRes as any)?.insertId ?? 0);
+
           if (!shopCode) return null;
         } else {
           // Update existing shop
-          await conn.query(
-            `
-              UPDATE Shops
-              SET ShopName = ?, Address = ?, UpdateAt = NOW()
-              WHERE ShopCode = ?
-            `,
-            [payload.shop_name.trim(), payload.address.trim(), shopCode]
+          await shopModel.updateShop(
+            conn,
+            shopCode,
+            payload.shop_name,
+            payload.address
           );
         }
 
@@ -156,22 +60,16 @@ const shopService = {
             payload.shop_name.trim();
 
           // Mark existing defaults as non-default
-          await conn.query(
-            `
-              UPDATE Shop_Bank_Accounts
-              SET IsDefault = 'N'
-              WHERE ShopCode = ?
-            `,
-            [shopCode]
-          );
+          await shopModel.clearDefaultBankAccounts(conn, shopCode);
 
           // Insert new default record
-          await conn.query(
-            `
-              INSERT INTO Shop_Bank_Accounts (ShopCode, AccountNumber, BankName, AccountHolder, IsDefault)
-              VALUES (?, ?, ?, ?, 'Y')
-            `,
-            [shopCode, accountNumber, bankName, accountHolder]
+          await shopModel.createBankAccount(
+            conn,
+            shopCode,
+            accountNumber,
+            bankName,
+            accountHolder,
+            "Y"
           );
         }
 

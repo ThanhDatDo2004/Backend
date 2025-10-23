@@ -11,7 +11,11 @@ const fieldQuantityController = {
    * GET /api/fields/:fieldCode/available-quantities
    * Get available quantities for a specific time slot
    */
-  async getAvailableQuantities(req: Request, res: Response, next: NextFunction) {
+  async getAvailableQuantities(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
     try {
       const { fieldCode } = req.params;
       const { playDate, startTime, endTime } = req.query;
@@ -26,6 +30,7 @@ const fieldQuantityController = {
       }
 
       // Validate field exists
+
       const field = await fieldModel.findById(Number(fieldCode));
       if (!field) {
         return next(
@@ -41,7 +46,12 @@ const fieldQuantityController = {
         String(endTime)
       );
 
-      return apiResponse.success(res, availability, "Danh sách sân trống", StatusCodes.OK);
+      return apiResponse.success(
+        res,
+        availability,
+        "Danh sách sân trống",
+        StatusCodes.OK
+      );
     } catch (error) {
       next(error);
     }
@@ -62,7 +72,9 @@ const fieldQuantityController = {
         );
       }
 
-      const quantities = await fieldQuantityService.getQuantitiesForField(Number(fieldCode));
+      const quantities = await fieldQuantityService.getQuantitiesForField(
+        Number(fieldCode)
+      );
 
       return apiResponse.success(
         res,
@@ -110,6 +122,7 @@ const fieldQuantityController = {
       }
 
       // Validate ownership
+
       const field = await fieldModel.findById(Number(fieldCode));
       if (!field) {
         return next(
@@ -142,6 +155,7 @@ const fieldQuantityController = {
       }
 
       // Update status
+
       const updated = await fieldQuantityService.updateQuantityStatus(
         quantity.quantity_id,
         status
@@ -166,7 +180,9 @@ const fieldQuantityController = {
     try {
       const { quantityId } = req.params;
 
-      const quantity = await fieldQuantityService.getQuantityById(Number(quantityId));
+      const quantity = await fieldQuantityService.getQuantityById(
+        Number(quantityId)
+      );
 
       return apiResponse.success(res, quantity, "Chi tiết sân", StatusCodes.OK);
     } catch (error) {
