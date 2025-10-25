@@ -7,8 +7,6 @@ import bookingService, {
   releaseExpiredHeldSlots,
 } from "../services/booking.service";
 import paymentService from "../services/payment.service";
-import { RowDataPacket } from "mysql2";
-import queryService from "../services/query";
 import { listFieldUtilities } from "../services/shopUtilities.service";
 
 const toNumber = (value: unknown) => {
@@ -51,14 +49,6 @@ const fieldController = {
         shopStatus,
       } = req.query;
 
-      const allowedSorts = new Set(["price", "rating", "name", "rent"]);
-      const sortKey =
-        typeof sortBy === "string" && allowedSorts.has(sortBy)
-          ? (sortBy as "price" | "rating" | "name" | "rent")
-          : undefined;
-      const sortDirection =
-        sortDir === "desc" || sortDir === "asc" ? sortDir : undefined;
-
       const data = await fieldService.list({
         search: queryString(search),
         sportType: queryString(sportType),
@@ -67,61 +57,16 @@ const fieldController = {
         priceMax: toNumber(priceMax),
         page: toNumber(pageParam),
         pageSize: toNumber(pageSizeParam),
-        sortBy: sortKey,
-        sortDir: sortDirection,
+        sortBy: typeof sortBy === "string" ? sortBy : undefined,
+        sortDir: sortDir === "desc" || sortDir === "asc" ? sortDir : undefined,
         status: queryString(status) ?? "active", // Mặc định chỉ lấy sân 'active'
         shopStatus: queryString(shopStatus),
         shopActive: 1, // Chỉ lấy sân của shop có chủ shop đang hoạt động
       });
 
-      const {
-        items,
-        facets,
-        summary,
-        total,
-        page,
-        pageSize,
-        totalPages,
-        hasNext,
-        hasPrev,
-        pagination,
-      } = data;
-
-      const appliedFilters = {
-        search: queryString(search),
-        sportType: queryString(sportType),
-        location: queryString(location),
-        priceMin: toNumber(priceMin),
-        priceMax: toNumber(priceMax),
-        status: queryString(status) ?? "active",
-        shopStatus: queryString(shopStatus),
-        sortBy: sortKey,
-        sortDir: sortDirection,
-      };
-
-      const paginationMeta = pagination ?? {
-        total,
-        page,
-        pageSize,
-        totalPages,
-        hasNext,
-        hasPrev,
-      };
-
       return apiResponse.success(
         res,
-        {
-          items,
-          total,
-          page,
-          pageSize,
-          facets,
-          summary,
-          meta: {
-            pagination: paginationMeta,
-            filters: appliedFilters,
-          },
-        },
+        data,
         "Fetched fields successfully",
         StatusCodes.OK
       );
@@ -441,38 +386,16 @@ const fieldController = {
   async getFieldStats(req: Request, res: Response, next: NextFunction) {
     try {
       const { fieldCode } = req.params;
-
-      const query = `
-        SELECT
-          f.FieldCode,
-          f.FieldName,
-          f.Rent,
-          f.Rent as booking_count,
-          f.Status,
-          f.DefaultPricePerHour,
-          f.SportType,
-          s.ShopName,
-          (SELECT COUNT(*) FROM Bookings
-           WHERE FieldCode = f.FieldCode
-           AND BookingStatus = 'confirmed') as confirmed_count,
-          (SELECT COUNT(*) FROM Bookings
-           WHERE FieldCode = f.FieldCode) as total_bookings
-        FROM Fields f
-        JOIN Shops s ON f.ShopCode = s.ShopCode
-        WHERE f.FieldCode = ?
-      `;
-
-      const [results] = await queryService.query<RowDataPacket[]>(query, [
-        fieldCode,
-      ]);
-
-      if (!results?.[0]) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại"));
+      const numericFieldCode = Number(fieldCode);
+      if (!Number.isFinite(numericFieldCode) || numericFieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
       }
 
       return apiResponse.success(
         res,
-        results[0],
+        await fieldService.getStats(numericFieldCode),
         "Thống kê sân",
         StatusCodes.OK
       );
@@ -493,50 +416,23 @@ const fieldController = {
   async listFieldsWithRent(req: Request, res: Response, next: NextFunction) {
     try {
       const { shopCode } = req.params;
+      const numericShopCode = Number(shopCode);
+      if (!Number.isFinite(numericShopCode) || numericShopCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã shop không hợp lệ")
+        );
+      }
       const { limit = "10", offset = "0" } = req.query;
 
       const validLimit = Math.min(Math.max(1, Number(limit)), 100);
       const validOffset = Math.max(0, Number(offset));
 
-      const query = `
-        SELECT
-          f.FieldCode,
-          f.FieldName,
-          f.Rent,
-          f.Rent as booking_count,
-          f.Status,
-          f.DefaultPricePerHour,
-          f.SportType,
-          s.ShopName
-        FROM Fields f
-        JOIN Shops s ON f.ShopCode = s.ShopCode
-        WHERE f.ShopCode = ?
-        ORDER BY f.Rent DESC
-        LIMIT ? OFFSET ?
-      `;
-
-      const [fields] = await queryService.query<RowDataPacket[]>(query, [
-        shopCode,
-        validLimit,
-        validOffset,
-      ]);
-
-      // Get total count
-      const [totalResult] = await queryService.query<RowDataPacket[]>(
-        `SELECT COUNT(*) as total FROM Fields WHERE ShopCode = ?`,
-        [shopCode]
-      );
-
       return apiResponse.success(
         res,
-        {
-          data: fields,
-          pagination: {
-            limit: validLimit,
-            offset: validOffset,
-            total: totalResult?.[0]?.total || 0,
-          },
-        },
+        await fieldService.listWithRent(numericShopCode, {
+          limit: validLimit,
+          offset: validOffset,
+        }),
         "Danh sách sân với thống kê",
         StatusCodes.OK
       );
@@ -558,38 +454,17 @@ const fieldController = {
   async syncFieldRent(req: Request, res: Response, next: NextFunction) {
     try {
       const { fieldCode } = req.params;
-
-      // Calculate actual rent count from confirmed bookings
-      const query = `
-        SELECT COUNT(*) as rent_count
-        FROM Bookings
-        WHERE FieldCode = ?
-          AND BookingStatus = 'confirmed'
-      `;
-
-      const [results] = await queryService.query<RowDataPacket[]>(query, [
-        fieldCode,
-      ]);
-
-      const actualRent = results?.[0]?.rent_count || 0;
-
-      // Update field rent to match actual count
-      const updateQuery = `
-        UPDATE Fields
-        SET Rent = ?
-        WHERE FieldCode = ?
-      `;
-
-      await queryService.query(updateQuery, [actualRent, fieldCode]);
-
-      console.log(
-        `[FIELD] Synced Field ${fieldCode} rent to ${actualRent} confirmed bookings`
-      );
+      const numericFieldCode = Number(fieldCode);
+      if (!Number.isFinite(numericFieldCode) || numericFieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
+        );
+      }
 
       return apiResponse.success(
         res,
-        { FieldCode: fieldCode, Rent: actualRent },
-        `Rent synced to ${actualRent}`,
+        await fieldService.syncFieldRent(numericFieldCode),
+        "Rent synced thành công",
         StatusCodes.OK
       );
     } catch (error) {
@@ -608,58 +483,10 @@ const fieldController = {
    */
   async syncAllFieldsRent(req: Request, res: Response, next: NextFunction) {
     try {
-      // Get all fields
-      const getAllFields = `SELECT FieldCode FROM Fields`;
-      const [fields] = await queryService.query<RowDataPacket[]>(
-        getAllFields,
-        []
-      );
-
-      if (!fields || fields.length === 0) {
-        return apiResponse.success(
-          res,
-          { synced: 0 },
-          "No fields to sync",
-          StatusCodes.OK
-        );
-      }
-
-      let syncedCount = 0;
-
-      // Sync each field
-      for (const field of fields) {
-        const fieldCode = field.FieldCode;
-
-        const countQuery = `
-          SELECT COUNT(*) as rent_count
-          FROM Bookings
-          WHERE FieldCode = ?
-            AND BookingStatus = 'confirmed'
-        `;
-
-        const [results] = await queryService.query<RowDataPacket[]>(
-          countQuery,
-          [fieldCode]
-        );
-
-        const actualRent = results?.[0]?.rent_count || 0;
-
-        const updateQuery = `
-          UPDATE Fields
-          SET Rent = ?
-          WHERE FieldCode = ?
-        `;
-
-        await queryService.query(updateQuery, [actualRent, fieldCode]);
-        syncedCount++;
-      }
-
-      console.log(`[FIELD] Synced ${syncedCount} fields rent counts`);
-
       return apiResponse.success(
         res,
-        { synced: syncedCount },
-        `Synced ${syncedCount} fields`,
+        await fieldService.syncAllFieldsRent(),
+        "Đồng bộ số lượt thuê thành công",
         StatusCodes.OK
       );
     } catch (error) {

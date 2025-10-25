@@ -2,8 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
-import queryService from "../services/query";
-import { RowDataPacket, ResultSetHeader } from "mysql2";
+import notificationService from "../services/notification.service";
 
 const notificationController = {
   /**
@@ -15,62 +14,27 @@ const notificationController = {
       const userId = (req as any).user?.UserID;
       const { isRead, limit = 10, offset = 0 } = req.query;
 
-      let query = `SELECT * FROM Notifications 
-                   WHERE UserID = ?`;
-      const params: any[] = [userId];
-
-      if (isRead !== undefined) {
-        const readChar = isRead === "true" ? "Y" : "N";
-        query += ` AND IsRead = ?`;
-        params.push(readChar);
-      }
-
-      query += ` ORDER BY CreateAt DESC LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [notifications] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
-      );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Notifications WHERE UserID = ?`;
-      const countParams: any[] = [userId];
-      if (isRead !== undefined) {
-        const readChar = isRead === "true" ? "Y" : "N";
-        countQuery += ` AND IsRead = ?`;
-        countParams.push(readChar);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
-      );
-
-      // Get unread count
-      const [unreadRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT COUNT(*) as unread_count FROM Notifications WHERE UserID = ? AND IsRead = 'N'`,
-        [userId]
-      );
+      const result = await notificationService.listNotifications(userId, {
+        isRead:
+          isRead === "true" ? true : isRead === "false" ? false : undefined,
+        limit: Number(limit),
+        offset: Number(offset),
+      });
 
       return apiResponse.success(
         res,
         {
-          data: notifications,
-          unread_count: unreadRows?.[0]?.unread_count || 0,
-          pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
-          },
+          ...result,
+          unread_count: result.unreadCount,
         },
         "Danh sách thông báo",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy thông báo"
+          error?.message || "Lỗi lấy thông báo"
         )
       );
     }
@@ -82,36 +46,23 @@ const notificationController = {
    */
   async markAsRead(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
       const { notificationID } = req.params;
 
-      const [notifications] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Notifications WHERE NotificationID = ? AND UserID = ?`,
-        [notificationID, userId]
-      );
-
-      if (!notifications?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy thông báo")
-        );
-      }
-
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Notifications SET IsRead = 'Y' WHERE NotificationID = ?`,
-        [notificationID]
+      const result = await notificationService.markAsRead(
+        Number(notificationID)
       );
 
       return apiResponse.success(
         res,
-        { notificationID, isRead: true },
+        { ...result, isRead: true },
         "Đánh dấu đã đọc",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi cập nhật thông báo"
+          error?.message || "Lỗi cập nhật thông báo"
         )
       );
     }
@@ -125,22 +76,19 @@ const notificationController = {
     try {
       const userId = (req as any).user?.UserID;
 
-      const [result] = await queryService.query<ResultSetHeader>(
-        `UPDATE Notifications SET IsRead = 'Y' WHERE UserID = ? AND IsRead = 'N'`,
-        [userId]
-      );
+      await notificationService.markAllAsRead(userId);
 
       return apiResponse.success(
         res,
-        { updated: result.affectedRows },
+        { userId },
         "Đánh dấu tất cả đã đọc",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi cập nhật thông báo"
+          error?.message || "Lỗi cập nhật thông báo"
         )
       );
     }
@@ -152,38 +100,20 @@ const notificationController = {
    */
   async deleteNotification(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
       const { notificationID } = req.params;
-
-      const [notifications] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Notifications WHERE NotificationID = ? AND UserID = ?`,
-        [notificationID, userId]
-      );
-
-      if (!notifications?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy thông báo")
-        );
-      }
-
-      await queryService.query<ResultSetHeader>(
-        `DELETE FROM Notifications WHERE NotificationID = ?`,
-        [notificationID]
+      const result = await notificationService.deleteNotification(
+        Number(notificationID)
       );
 
       return apiResponse.success(
         res,
-        { notificationID },
+        result,
         "Xóa thông báo thành công",
         StatusCodes.OK
       );
-    } catch (error) {
-      next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi xóa thông báo"
-        )
-      );
+    } catch (error: any) {
+      if (error instanceof ApiError) return next(error);
+      next(new ApiError(StatusCodes.INTERNAL_SERVER_ERROR, error?.message));
     }
   },
 };
@@ -192,33 +122,15 @@ const notificationController = {
  * Service function to create notifications (được dùng bởi các service khác)
  */
 export async function createNotification(
-  userID: number,
-  type: string,
+  userId: number,
   title: string,
-  content?: string
+  message: string
 ) {
   try {
-    await queryService.query<ResultSetHeader>(
-      `INSERT INTO Notifications (UserID, Type, Title, Content, IsRead, CreateAt)
-       VALUES (?, ?, ?, ?, 'N', NOW())`,
-      [userID, type, title, content || null]
-    );
+    await notificationService.createNotification(userId, title, message);
   } catch (error) {
     console.error("Error creating notification:", error);
   }
 }
 
 export default notificationController;
-
-
-
-
-
-
-
-
-
-
-
-
-

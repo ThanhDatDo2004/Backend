@@ -2,9 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
-import payoutService from "../services/payout.service";
-import queryService from "../services/query";
-import { RowDataPacket } from "mysql2";
+import walletService from "../services/wallet.service";
 
 const walletController = {
   /**
@@ -15,26 +13,15 @@ const walletController = {
     try {
       const userId = (req as any).user?.UserID;
 
-      // Lấy shop code
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
-      }
-
-      const shopCode = shopRows[0].ShopCode;
-
-      const stats = await payoutService.getShopWalletStats(shopCode);
+      // Get shop code using service
+      const stats = await walletService.getWalletStatsByUser(userId);
 
       return apiResponse.success(res, stats, "Thông tin ví", StatusCodes.OK);
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy thông tin ví"
+          error?.message || "Lỗi lấy thông tin ví"
         )
       );
     }
@@ -49,68 +36,24 @@ const walletController = {
       const userId = (req as any).user?.UserID;
       const { type, limit = 10, offset = 0 } = req.query;
 
-      // Lấy shop code
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
-      }
-
-      const shopCode = shopRows[0].ShopCode;
-
-      let query = `SELECT wt.*, b.BookingCode, pr.PayoutID
-                   FROM Wallet_Transactions wt
-                   LEFT JOIN Bookings b ON wt.BookingCode = b.BookingCode
-                   LEFT JOIN Payout_Requests pr ON wt.PayoutID = pr.PayoutID
-                   WHERE wt.ShopCode = ?`;
-      const params: any[] = [shopCode];
-
-      if (type) {
-        query += ` AND wt.Type = ?`;
-        params.push(type);
-      }
-
-      query += ` ORDER BY wt.CreateAt DESC LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [transactions] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
-      );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Wallet_Transactions WHERE ShopCode = ?`;
-      const countParams: any[] = [shopCode];
-      if (type) {
-        countQuery += ` AND Type = ?`;
-        countParams.push(type);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
-      );
+      // Get shop code using service
+      const result = await walletService.getTransactionsByUser(userId, {
+        type: type as string,
+        limit: Number(limit),
+        offset: Number(offset),
+      });
 
       return apiResponse.success(
         res,
-        {
-          data: transactions,
-          pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
-          },
-        },
+        result,
         "Lịch sử giao dịch",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy lịch sử giao dịch"
+          error?.message || "Lỗi lấy lịch sử giao dịch"
         )
       );
     }
@@ -122,9 +65,14 @@ const walletController = {
    */
   async adminGetShopWallet(req: Request, res: Response, next: NextFunction) {
     try {
-      const { shopCode } = req.params;
+      const shopCode = Number(req.params.shopCode);
+      if (!Number.isFinite(shopCode) || shopCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã shop không hợp lệ")
+        );
+      }
 
-      const stats = await payoutService.getShopWalletStats(Number(shopCode));
+      const stats = await walletService.getWalletStatsByShop(shopCode);
 
       return apiResponse.success(
         res,
@@ -132,11 +80,11 @@ const walletController = {
         "Thông tin ví shop",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy ví shop"
+          error?.message || "Lỗi lấy ví shop"
         )
       );
     }
@@ -152,59 +100,32 @@ const walletController = {
     next: NextFunction
   ) {
     try {
-      const { shopCode } = req.params;
+      const shopCode = Number(req.params.shopCode);
+      if (!Number.isFinite(shopCode) || shopCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "Mã shop không hợp lệ")
+        );
+      }
+      await shopService.ensureShopOwnership(shopCode, (req as any).user?.UserID ?? 0);
       const { type, limit = 10, offset = 0 } = req.query;
 
-      let query = `SELECT wt.*, b.BookingCode, pr.PayoutID
-                   FROM Wallet_Transactions wt
-                   LEFT JOIN Bookings b ON wt.BookingCode = b.BookingCode
-                   LEFT JOIN Payout_Requests pr ON wt.PayoutID = pr.PayoutID
-                   WHERE wt.ShopCode = ?`;
-      const params: any[] = [Number(shopCode)];
-
-      if (type) {
-        query += ` AND wt.Type = ?`;
-        params.push(type);
-      }
-
-      query += ` ORDER BY wt.CreateAt DESC LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [transactions] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
-      );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Wallet_Transactions WHERE ShopCode = ?`;
-      const countParams: any[] = [Number(shopCode)];
-      if (type) {
-        countQuery += ` AND Type = ?`;
-        countParams.push(type);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
-      );
+      const result = await walletService.getTransactionsByShop(shopCode, {
+        type: type as string,
+        limit: Number(limit),
+        offset: Number(offset),
+      });
 
       return apiResponse.success(
         res,
-        {
-          data: transactions,
-          pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
-          },
-        },
+        result,
         "Lịch sử giao dịch",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
           StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy lịch sử"
+          error?.message || "Lỗi lấy lịch sử"
         )
       );
     }

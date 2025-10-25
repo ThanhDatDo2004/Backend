@@ -1,6 +1,7 @@
-import type { ResultSetHeader } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { FIELD_QUERIES } from "../queries/field.queries";
 
 export type FieldFilters = {
   search?: string;
@@ -77,26 +78,7 @@ export type FieldPricingRow = {
   price_per_hour: number;
 };
 
-const BASE_SELECT = `
-  SELECT
-    f.FieldCode AS field_code,
-    f.ShopCode AS shop_code,
-    f.FieldName AS field_name,
-    f.SportType AS sport_type,
-    f.Address AS address,
-    f.DefaultPricePerHour AS price_per_hour,
-    f.Status AS status,
-    f.Rent AS rent,
-    s.ShopName AS shop_name,
-    s.Address AS shop_address,
-    s.UserID AS shop_user_id,
-    s.IsApproved AS shop_is_approved
-  FROM Fields f
-  JOIN Shops s ON s.ShopCode = f.ShopCode
-  JOIN Users u ON u.UserID = s.UserID
-  
-`;
-
+// Helper function: Build WHERE clause based on filters (acceptable in model - query composition helper)
 function buildWhere(filters: FieldFilters) {
   const conditions: string[] = [];
   const params: any[] = [];
@@ -159,6 +141,7 @@ function buildWhere(filters: FieldFilters) {
   return { clause, params };
 }
 
+// Helper function: Build ORDER BY clause based on sorting
 function buildOrder(sorting: FieldSorting) {
   const dir = sorting.sortDir === "desc" ? "DESC" : "ASC";
   switch (sorting.sortBy) {
@@ -174,6 +157,7 @@ function buildOrder(sorting: FieldSorting) {
 }
 
 const fieldModel = {
+  // List fields with filters and pagination
   async list(
     filters: FieldFilters,
     pagination: FieldPagination,
@@ -182,7 +166,7 @@ const fieldModel = {
     const { clause, params } = buildWhere(filters);
     const order = buildOrder(sorting);
     const query = `
-      ${BASE_SELECT}
+      ${FIELD_QUERIES.BASE_SELECT}
       ${clause}
       GROUP BY
         f.FieldCode,
@@ -199,132 +183,93 @@ const fieldModel = {
       ${order}
       LIMIT ? OFFSET ?
     `;
-    return (await queryService.execQueryList(query, [
+    const [rows] = await queryService.query<RowDataPacket[]>(query, [
       ...params,
       pagination.limit,
       pagination.offset,
-    ])) as FieldRow[];
+    ]);
+    return (rows as FieldRow[]) || [];
   },
 
+  // Get field images by codes
   async getImagesByCodes(fieldCode: number, imageCodes: number[]) {
     if (!imageCodes.length) return [];
-    const query = `
-      SELECT
-        ImageCode AS image_code,
-        FieldCode AS field_code,
-        ImageUrl AS image_url,
-        SortOrder AS sort_order
-      FROM Field_Images
-      WHERE FieldCode = ? AND ImageCode IN (?)
-      ORDER BY SortOrder, ImageCode
-    `;
-    return await queryService.execQueryList(query, [fieldCode, imageCodes]);
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.GET_FIELD_IMAGES,
+      [fieldCode, imageCodes]
+    );
+    return rows || [];
   },
 
+  // Delete field images
   async deleteImages(fieldCode: number, imageCodes: number[]) {
     if (!imageCodes.length) return 0;
-    const query = `
-      DELETE FROM Field_Images
-      WHERE FieldCode = ? AND ImageCode IN (?)
-    `;
-    const result = await queryService.execQuery(query, [fieldCode, imageCodes]);
-    if (typeof result === "boolean") {
-      return result ? imageCodes.length : 0;
-    }
-    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.DELETE_FIELD_IMAGES,
+      [fieldCode, imageCodes]
+    );
+    return Number(result?.affectedRows ?? 0);
   },
 
+  // Count fields with filters
   async count(filters: FieldFilters): Promise<number> {
     const { clause, params } = buildWhere(filters);
-    const query = `
-      SELECT COUNT(DISTINCT f.FieldCode) AS total
-      FROM Fields f
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      JOIN Users u ON u.UserID = s.UserID
-      ${clause}
-    `;
-    const rows = await queryService.execQueryList(query, params);
+    const query = `${FIELD_QUERIES.COUNT_FIELDS} ${clause}`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
     return Number((rows?.[0] as { total?: number })?.total ?? 0);
   },
 
+  // Count fields by status
   async countByStatus(filters: FieldFilters) {
     const { clause, params } = buildWhere(filters);
-    const query = `
-      SELECT f.Status AS status, COUNT(DISTINCT f.FieldCode) AS total
-      FROM Fields f
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      JOIN Users u ON u.UserID = s.UserID
-      ${clause}
-      GROUP BY f.Status
-    `;
-    return (await queryService.execQueryList(query, params)) as Array<{
-      status: string | null;
-      total: number;
-    }>;
+    const query = `${FIELD_QUERIES.COUNT_BY_STATUS} ${clause} GROUP BY f.Status`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return (rows as Array<{ status: string | null; total: number }>) || [];
   },
 
+  // Count fields by shop approval
   async countByShopApproval(filters: FieldFilters) {
     const { clause, params } = buildWhere(filters);
-    const query = `
-      SELECT s.IsApproved AS approval, COUNT(DISTINCT f.FieldCode) AS total
-      FROM Fields f
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      JOIN Users u ON u.UserID = s.UserID
-      ${clause}
-      GROUP BY s.IsApproved
-    `;
-    return (await queryService.execQueryList(query, params)) as Array<{
-      approval: string | null;
-      total: number;
-    }>;
+    const query = `${FIELD_QUERIES.COUNT_BY_SHOP_APPROVAL} ${clause} GROUP BY s.IsApproved`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return (rows as Array<{ approval: string | null; total: number }>) || [];
   },
 
+  // List distinct addresses
   async listAddresses(filters: FieldFilters): Promise<string[]> {
     const { clause, params } = buildWhere(filters);
-    const query = `
-      SELECT DISTINCT f.Address AS address
-      FROM Fields f
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      JOIN Users u ON u.UserID = s.UserID
-      ${clause}
-    `;
-    const rows = await queryService.execQueryList(query, params);
-    return rows
-      .map((row: { address?: string | null }) => row.address ?? "")
-      .filter(Boolean);
+    const query = `${FIELD_QUERIES.LIST_ADDRESSES} ${clause}`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return (
+      (rows as Array<{ address?: string | null }>)
+        ?.map((row) => row.address ?? "")
+        .filter(Boolean) || []
+    );
   },
 
+  // List distinct sport types
   async listSportTypes(filters: FieldFilters): Promise<string[]> {
     const { clause, params } = buildWhere(filters);
-    const query = `
-      SELECT DISTINCT f.SportType AS sport_type
-      FROM Fields f
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      JOIN Users u ON u.UserID = s.UserID
-      ${clause}
-      ORDER BY f.SportType
-    `;
-    const rows = await queryService.execQueryList(query, params);
-    return rows
-      .map((row: { sport_type?: string | null }) => row.sport_type ?? "")
-      .filter(Boolean);
+    const query = `${FIELD_QUERIES.LIST_SPORT_TYPES} ${clause}`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return (
+      (rows as Array<{ sport_type?: string | null }>)
+        ?.map((row) => row.sport_type ?? "")
+        .filter(Boolean) || []
+    );
   },
 
+  // List images for multiple fields
   async listImages(fieldCodes: number[]) {
     if (!fieldCodes.length) return [];
-    const query = `
-      SELECT
-        ImageCode AS image_code,
-        FieldCode AS field_code,
-        ImageUrl AS image_url,
-        SortOrder AS sort_order
-      FROM Field_Images
-      WHERE FieldCode IN (?)
-      ORDER BY FieldCode, SortOrder, ImageCode
-    `;
-    return await queryService.execQueryList(query, [fieldCodes]);
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_FIELD_IMAGES,
+      [fieldCodes]
+    );
+    return rows || [];
   },
 
+  // List field slots
   async listSlots(fieldCode: number, playDate?: string, quantityId?: number) {
     const params: any[] = [fieldCode];
     let clause = "WHERE fs.FieldCode = ?";
@@ -332,356 +277,189 @@ const fieldModel = {
       clause += " AND fs.PlayDate = ?";
       params.push(playDate);
     }
-    // NEW: Filter by QuantityID if provided
     if (quantityId !== undefined && quantityId !== null) {
       clause += " AND (fs.QuantityID = ? OR fs.QuantityID IS NULL)";
       params.push(quantityId);
     }
-    const query = `
-      SELECT
-        fs.SlotID AS slot_id,
-        fs.FieldCode AS field_code,
-        fs.QuantityID AS quantity_id,
-        fq.QuantityNumber AS quantity_number,
-        DATE_FORMAT(fs.PlayDate, '%Y-%m-%d') AS play_date,
-        DATE_FORMAT(fs.StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(fs.EndTime, '%H:%i') AS end_time,
-        fs.Status AS status,
-        DATE_FORMAT(fs.HoldExpiresAt, '%Y-%m-%d %H:%i:%s') AS hold_expires_at,
-        UNIX_TIMESTAMP(CONVERT_TZ(fs.HoldExpiresAt, '+07:00', '+00:00')) AS hold_exp_ts,
-        UNIX_TIMESTAMP(fs.UpdateAt) AS update_at_ts
-      FROM Field_Slots fs
-      LEFT JOIN Field_Quantity fq ON fs.QuantityID = fq.QuantityID
-      ${clause}
-      ORDER BY fs.PlayDate, fs.StartTime
-    `;
-    return (await queryService.execQueryList(query, params)) as FieldSlotRow[];
+    const query = `${FIELD_QUERIES.LIST_FIELD_SLOTS} ${clause} ORDER BY fs.PlayDate, fs.StartTime`;
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return (rows as FieldSlotRow[]) || [];
   },
 
+  // List booking slots
   async listBookingSlots(fieldCode: number, playDate: string) {
-    const query = `
-      SELECT
-        bs.Slot_ID AS booking_slot_id,
-        bs.FieldCode AS field_code,
-        bs.QuantityID AS quantity_id,
-        fq.QuantityNumber AS quantity_number,
-        DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') AS play_date,
-        DATE_FORMAT(bs.StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(bs.EndTime, '%H:%i') AS end_time,
-        bs.Status AS booking_slot_status,
-        b.BookingStatus AS booking_status,
-        b.PaymentStatus AS payment_status
-      FROM Booking_Slots bs
-      INNER JOIN Bookings b ON bs.BookingCode = b.BookingCode
-      LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
-      WHERE bs.FieldCode = ?
-        AND bs.PlayDate = ?
-        AND b.BookingStatus IN ('pending', 'confirmed')
-    `;
-    return (await queryService.execQueryList(query, [
-      fieldCode,
-      playDate,
-    ])) as BookingSlotRow[];
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_BOOKING_SLOTS,
+      [fieldCode, playDate]
+    );
+    return (rows as BookingSlotRow[]) || [];
   },
 
+  // Check if field has future bookings
   async hasFutureBookings(fieldCode: number) {
-    // Check if field has ANY FUTURE BOOKINGS (FUTURE = bookings that haven't finished yet)
-    // Future = PlayDate > today OR (PlayDate = today AND EndTime > current_time)
-    // Only counts 'booked' or 'held' slots (not cancelled/completed)
-    //
-    // If this returns true → BLOCK field deletion (409 Conflict)
-    // If this returns false → CAN DELETE field (including all past bookings)
-    const query = `
-      SELECT COUNT(*) AS cnt
-      FROM Field_Slots
-      WHERE FieldCode = ?
-        AND (
-          (PlayDate > CURDATE()) OR
-          (PlayDate = CURDATE() AND EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i'))
-        )
-        AND Status IN ('booked', 'held')
-    `;
-    const rows = await queryService.execQueryList(query, [fieldCode]);
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.HAS_FUTURE_BOOKINGS,
+      [fieldCode]
+    );
     return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0) > 0;
   },
 
+  // Delete all images for field
   async deleteAllImagesForField(fieldCode: number) {
-    // Step 1 of deletion: Remove all image records from database
-    // Note: Physical files (S3/local) are deleted before calling this method
-    const query = `
-      DELETE FROM Field_Images WHERE FieldCode = ?
-    `;
-    const result = await queryService.execQuery(query, [fieldCode]);
-    if (typeof result === "boolean") return result ? 1 : 0;
-    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
-  },
-
-  async listAllImagesForField(fieldCode: number) {
-    const query = `
-      SELECT
-        ImageCode AS image_code,
-        FieldCode AS field_code,
-        ImageUrl AS image_url,
-        SortOrder AS sort_order
-      FROM Field_Images
-      WHERE FieldCode = ?
-      ORDER BY SortOrder, ImageCode
-    `;
-    return await queryService.execQueryList(query, [fieldCode]);
-  },
-
-  async hardDeleteField(fieldCode: number) {
-    // Step 4 (final) of deletion: Delete the field record itself
-    // Only reaches here if all FK constraints are resolved:
-    // - All Field_Images deleted
-    // - All Field_Pricing deleted
-    // - All Bookings deleted
-    const query = `
-      DELETE FROM Fields WHERE FieldCode = ?
-    `;
-    const result = await queryService.execQuery(query, [fieldCode]);
-    if (typeof result === "boolean") return result;
-    return !!(
-      result &&
-      typeof (result as ResultSetHeader).affectedRows === "number" &&
-      (result as ResultSetHeader).affectedRows > 0
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.DELETE_ALL_IMAGES_FOR_FIELD,
+      [fieldCode]
     );
+    return Number(result?.affectedRows ?? 0);
   },
 
+  // List all images for field
+  async listAllImagesForField(fieldCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_ALL_IMAGES_FOR_FIELD,
+      [fieldCode]
+    );
+    return rows || [];
+  },
+
+  // Hard delete field
+  async hardDeleteField(fieldCode: number) {
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.HARD_DELETE_FIELD,
+      [fieldCode]
+    );
+    return !!(result && result.affectedRows > 0);
+  },
+
+  // Delete all pricing for field
   async deleteAllPricingForField(fieldCode: number) {
-    // Step 2 of deletion: Delete all pricing schedules for this field
-    // Removes Field_Pricing records (FK to Fields)
-    const query = `
-      DELETE FROM Field_Pricing WHERE FieldCode = ?
-    `;
-    const result = await queryService.execQuery(query, [fieldCode]);
-    if (typeof result === "boolean") return result ? 1 : 0;
-    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.DELETE_ALL_PRICING_FOR_FIELD,
+      [fieldCode]
+    );
+    return Number(result?.affectedRows ?? 0);
   },
 
+  // Check if field has any bookings
   async hasAnyBookings(fieldCode: number) {
-    // Check if field has ANY bookings (regardless of date/status)
-    // Currently not used in deletion (we only check future bookings)
-    // But useful for other purposes (e.g., preventing field modification)
-    const query = `
-      SELECT COUNT(*) AS cnt
-      FROM Bookings
-      WHERE FieldCode = ?
-    `;
-    const rows = await queryService.execQueryList(query, [fieldCode]);
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.HAS_ANY_BOOKINGS,
+      [fieldCode]
+    );
     return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0) > 0;
   },
 
+  // Delete all bookings for field
   async deleteAllBookingsForField(fieldCode: number) {
-    // Step 3 of deletion: Delete ALL bookings (past, present, cancelled, completed, etc.)
-    // This is ONLY called after confirming there are NO FUTURE bookings
-    //
-    // POLICY:
-    // ✅ CAN DELETE sân if: No bookings OR all bookings are PAST (qua hạn)
-    // ❌ CANNOT DELETE sân if: Any booking is FUTURE (chưa qua hạn) → 409 error
-    //
-    // When deleting, we remove ALL bookings because:
-    // - Future bookings: Already checked and blocked
-    // - Past bookings: Can be safely deleted with field
-    // - Cancelled/Completed: Safe to delete
-    const query = `
-      DELETE FROM Bookings WHERE FieldCode = ?
-    `;
-    const result = await queryService.execQuery(query, [fieldCode]);
-    if (typeof result === "boolean") return result ? 1 : 0;
-    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.DELETE_ALL_BOOKINGS_FOR_FIELD,
+      [fieldCode]
+    );
+    return Number(result?.affectedRows ?? 0);
   },
 
+  // Soft delete field
   async softDeleteField(fieldCode: number) {
-    // Soft delete: Mark field as 'inactive' without removing records
-    // Used when you want to keep booking history but hide the field
-    const query = `
-      UPDATE Fields SET Status = 'inactive' WHERE FieldCode = ?
-    `;
-    const result = await queryService.execQuery(query, [fieldCode]);
-    if (typeof result === "boolean") return result;
-    return !!(
-      result &&
-      typeof (result as ResultSetHeader).affectedRows === "number" &&
-      (result as ResultSetHeader).affectedRows > 0
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.SOFT_DELETE_FIELD,
+      [fieldCode]
     );
+    return !!(result && result.affectedRows > 0);
   },
 
+  // List pricing for field
   async listPricing(fieldCode: number) {
-    const query = `
-      SELECT
-        PricingID AS pricing_id,
-        FieldCode AS field_code,
-        DayOfWeek AS day_of_week,
-        DATE_FORMAT(StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(EndTime, '%H:%i') AS end_time,
-        PricePerHour AS price_per_hour
-      FROM Field_Pricing
-      WHERE FieldCode = ?
-      ORDER BY DayOfWeek, StartTime
-    `;
-    return (await queryService.execQueryList(query, [
-      fieldCode,
-    ])) as FieldPricingRow[];
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_FIELD_PRICING,
+      [fieldCode]
+    );
+    return (rows as FieldPricingRow[]) || [];
   },
 
+  // Find field by code
   async findById(fieldCode: number) {
-    const query = `
-      SELECT
-        f.FieldCode AS field_code,
-        f.ShopCode AS shop_code
-      FROM Fields f
-      WHERE f.FieldCode = ?
-      LIMIT 1
-    `;
-    const rows = await queryService.execQueryList(query, [fieldCode]);
-    return (
-      (rows[0] as { field_code: number; shop_code: number } | undefined) ?? null
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.GET_FIELD_BY_CODE,
+      [fieldCode]
     );
+    return rows?.[0] || null;
   },
 
+  // Find shop by code
   async findShopByCode(shopCode: number) {
-    const query = `
-      SELECT
-        s.ShopCode AS shop_code,
-        s.UserID AS user_id,
-        s.IsApproved AS is_approved
-      FROM Shops s
-      WHERE s.ShopCode = ?
-      LIMIT 1
-    `;
-    const rows = await queryService.execQueryList(query, [shopCode]);
-    return (
-      (rows[0] as
-        | { shop_code: number; user_id: number; is_approved: string | null }
-        | undefined) ?? null
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.GET_SHOP_BY_CODE,
+      [shopCode]
     );
+    return rows?.[0] || null;
   },
 
+  // Create field image
   async createImage(fieldCode: number, imageUrl: string, sortOrder?: number) {
-    return await queryService.execTransaction(
-      "fieldModel.createImage",
-      async (conn) => {
-        let finalSortOrder = sortOrder;
-
-        if (typeof finalSortOrder !== "number") {
-          const [orderRows] = await conn.query(
-            `
-              SELECT COALESCE(MAX(SortOrder), -1) + 1 AS next_order
-              FROM Field_Images
-              WHERE FieldCode = ?
-            `,
-            [fieldCode]
-          );
-          const nextOrder =
-            (orderRows as Array<{ next_order: number }>)[0]?.next_order ?? 0;
-          finalSortOrder = Number(nextOrder);
-        }
-
-        return await fieldModel.insertFieldImage(conn, {
-          fieldCode,
-          imageUrl,
-          sortOrder: finalSortOrder ?? 0,
-        });
-      }
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.CREATE_FIELD_IMAGE,
+      [fieldCode, imageUrl, sortOrder ?? 0]
     );
+    return result.insertId;
   },
 
- 
-
+  // Insert field (transaction context)
   async insertField(
     conn: PoolConnection,
     params: {
       shopCode: number;
       fieldName: string;
       sportType: string;
-      address?: string | null;
       pricePerHour: number;
-      status?: "active" | "maintenance" | "inactive";
     }
   ) {
     const [result] = await conn.query<ResultSetHeader>(
-      `
-        INSERT INTO Fields (
-          ShopCode,
-          FieldName,
-          SportType,
-          Address,
-          DefaultPricePerHour,
-          Status
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-      `,
+      FIELD_QUERIES.INSERT_FIELD,
       [
         params.shopCode,
         params.fieldName,
         params.sportType,
-        params.address ?? null,
         params.pricePerHour,
-        params.status ?? "active",
+        "active",
+        0,
       ]
     );
-
-    return Number(result.insertId ?? 0);
+    return result.insertId;
   },
 
+  // Update field
   async updateField(
     fieldId: number,
     dataToUpdate: Partial<{
-      field_name: string;
-      sport_type: string;
       address: string;
-      price_per_hour: number;
       status: "active" | "maintenance" | "inactive";
+      pricePerHour: number;
+      fieldName: string;
+      sportType: string;
     }>
   ) {
-    const fields: string[] = [];
-    const params: any[] = [];
-
-    if (dataToUpdate.field_name) {
-      fields.push("FieldName = ?");
-      params.push(dataToUpdate.field_name);
+    if (
+      !dataToUpdate.fieldName ||
+      !dataToUpdate.sportType ||
+      dataToUpdate.address === undefined ||
+      dataToUpdate.pricePerHour === undefined
+    ) {
+      return 0;
     }
-    if (dataToUpdate.sport_type) {
-      fields.push("SportType = ?");
-      params.push(dataToUpdate.sport_type);
-    }
-    if (dataToUpdate.address) {
-      fields.push("Address = ?");
-      params.push(dataToUpdate.address);
-    }
-    if (dataToUpdate.price_per_hour) {
-      fields.push("DefaultPricePerHour = ?");
-      params.push(dataToUpdate.price_per_hour);
-    }
-    if (dataToUpdate.status) {
-      fields.push("Status = ?");
-      params.push(dataToUpdate.status);
-    }
-
-    if (fields.length === 0) {
-      return false;
-    }
-
-    const query = `
-      UPDATE Fields
-      SET ${fields.join(", ")}
-      WHERE FieldCode = ?
-    `;
-    params.push(fieldId);
-
-    const result = await queryService.execQuery(query, params);
-    // If execQuery returns a boolean, just return it; otherwise, check affectedRows
-    if (typeof result === "boolean") {
-      return result;
-    }
-    return !!(
-      result &&
-      typeof (result as any).affectedRows === "number" &&
-      (result as any).affectedRows > 0
+    const [result] = await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.UPDATE_FIELD_DETAILED,
+      [
+        dataToUpdate.fieldName,
+        dataToUpdate.sportType,
+        dataToUpdate.address,
+        dataToUpdate.pricePerHour,
+        fieldId,
+      ]
     );
+    return Number(result?.affectedRows ?? 0);
   },
 
+  // Insert field image (transaction context)
   async insertFieldImage(
     conn: PoolConnection,
     params: {
@@ -691,19 +469,84 @@ const fieldModel = {
     }
   ) {
     const [result] = await conn.query<ResultSetHeader>(
-      `
-        INSERT INTO Field_Images (FieldCode, ImageUrl, SortOrder)
-        VALUES (?, ?, ?)
-      `,
+      FIELD_QUERIES.INSERT_FIELD_IMAGE,
       [params.fieldCode, params.imageUrl, params.sortOrder]
     );
+    return result.insertId;
+  },
 
-    return {
-      image_code: Number(result.insertId ?? 0),
-      field_code: params.fieldCode,
-      image_url: params.imageUrl,
-      sort_order: params.sortOrder,
-    };
+  // Insert pricing (transaction context)
+  async insertPricing(
+    conn: PoolConnection,
+    fieldCode: number,
+    dayOfWeek: number,
+    startTime: string,
+    endTime: string,
+    pricePerHour: number
+  ) {
+    const [result] = await conn.query<ResultSetHeader>(
+      FIELD_QUERIES.INSERT_FIELD_PRICING,
+      [fieldCode, dayOfWeek, startTime, endTime, pricePerHour]
+    );
+    return result.insertId;
+  },
+
+  async getFieldStats(fieldCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.GET_FIELD_STATS,
+      [fieldCode]
+    );
+    return rows?.[0] || null;
+  },
+
+  async listFieldsWithRent(
+    shopCode: number,
+    limit: number,
+    offset: number
+  ) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_FIELDS_WITH_RENT,
+      [shopCode, limit, offset]
+    );
+    return rows || [];
+  },
+
+  async countFieldsByShop(shopCode: number): Promise<number> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.COUNT_FIELDS_BY_SHOP,
+      [shopCode]
+    );
+    return rows?.[0]?.total || 0;
+  },
+
+  async countConfirmedBookingsForField(fieldCode: number): Promise<number> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.COUNT_CONFIRMED_BOOKINGS_FOR_FIELD,
+      [fieldCode]
+    );
+    return rows?.[0]?.rent_count || 0;
+  },
+
+  async updateFieldRent(fieldCode: number, rent: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      FIELD_QUERIES.UPDATE_FIELD_RENT,
+      [rent, fieldCode]
+    );
+  },
+
+  async listAllFieldCodes(): Promise<number[]> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      FIELD_QUERIES.LIST_ALL_FIELD_CODES,
+      []
+    );
+    return rows?.map((row) => Number(row.FieldCode)) ?? [];
+  },
+
+  async withTransaction<T>(
+    label: string,
+    handler: (connection: PoolConnection) => Promise<T>
+  ): Promise<T> {
+    return queryService.execTransaction(label, handler);
   },
 };
 

@@ -1,92 +1,67 @@
-// src/queries/auth.queries.ts
-const authQueries = {
-  // Lấy thông tin đăng nhập (Users: PascalCase)
-  getUserAuth: `
+// SQL templates cho auth operations
+export const AUTH_QUERIES = {
+  // Lấy thông tin đăng nhập
+  GET_USER_AUTH: `
     SELECT UserID, LevelCode, FullName, Email, PasswordHash, IsActive, _destroy
     FROM Users
-    WHERE Email = ?
+    WHERE Email = ? OR Email = ?
     LIMIT 1
   `,
 
   // Kiểm tra trùng Email
-  getUserByEmailOrUserId: `
-    SELECT UserID, Email
+  GET_USER_BY_EMAIL: `
+    SELECT UserID, Email, LevelCode
     FROM Users
     WHERE Email = ?
     LIMIT 1
   `,
 
-  // Lấy LevelCode cho khách (Users_Level)
-  getCusLevelCode: `
+  // Lấy LevelCode cho khách
+  GET_CUSTOMER_LEVEL_CODE: `
     SELECT LevelCode AS level_code
     FROM Users_Level
     WHERE LevelType = 'cus'
     LIMIT 1
   `,
 
-  // Thêm user mới (bỏ CreateAt/UpdateAt vì đã DEFAULT; PhoneNumber/Password có thể NULL)
-  insertUser: `
+  // Thêm user mới
+  CREATE_USER: `
     INSERT INTO Users (
       LevelCode,
       FullName,
       PasswordHash,
       Email,
       FirstLogin,
-      
       IsActive,
       _destroy
-    ) VALUES (
-      ?,      -- LevelCode
-      ?,      -- FullName
-      ?,      -- PasswordHash
-      ?,      -- Email
-      1,      -- IsActive
-      1,      -- FirstLogin
-      0       -- _destroy
-    )
-  `,
-  // Password,
-  // PhoneNumber,
-  // NULL,   -- PhoneNumber (nullable)
-  //     NULL,   -- Password (plaintext - không dùng, để NULL)
-
-  // OTP / mã xác thực email (Users_Verification: PascalCase chuẩn)
-  insertVerifyCode: `
-    INSERT INTO Users_Verification (UserCode, Email, Code, ExpiresAt, Consumed)
-    VALUES (?, ?, ?, ?, 'N')
-  `,
-  getValidVerifyCode: `
-    SELECT Id, UserCode
-    FROM Users_Verification
-    WHERE Email = ?
-      AND Code = ?
-      AND Consumed = 'N'
-      AND ExpiresAt > NOW()
-    ORDER BY Id DESC
-    LIMIT 1
-  `,
-  consumeVerifyCodeById: `
-    UPDATE Users_Verification
-    SET Consumed = 'Y'
-    WHERE Id = ?
-    LIMIT 1
+    ) VALUES (?, ?, ?, ?, 1, 1, 0)
   `,
 
-  // Kích hoạt user
-  activateUserById: `
-    UPDATE Users
-    SET IsActive = 1, UpdateAt = NOW()
-    WHERE UserID = ?
-    LIMIT 1
-  `,
-
-  // Đổi mật khẩu theo email (lưu ý UpdateAt, không phải UpdatedAt)
-  updatePasswordByEmail: `
+  // Cập nhật mật khẩu theo email
+  UPDATE_PASSWORD_BY_EMAIL: `
     UPDATE Users
     SET PasswordHash = ?, UpdateAt = NOW()
     WHERE Email = ?
     LIMIT 1
   `,
+
+  // Kiểm tra user tồn tại
+  CHECK_USER_EXISTS: `
+    SELECT UserID
+    FROM Users
+    WHERE Email = ?
+    LIMIT 1
+  `,
+
+  // Lấy user theo ID
+  GET_USER_BY_ID: `
+    SELECT UserID, Email, LevelCode, FullName, IsActive, _destroy
+    FROM Users
+    WHERE UserID = ?
+    LIMIT 1
+  `,
 };
 
+// Giữ lại cách import cũ để không break existing code
+const authQueries = AUTH_QUERIES;
 export default authQueries;

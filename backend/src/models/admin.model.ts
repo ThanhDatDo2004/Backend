@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { ADMIN_QUERIES } from "../queries/admin.queries";
 
 // ============ TYPES ============
 export type UserRow = {
@@ -60,19 +61,7 @@ export type FinanceBookingRow = {
   quantity_id: number | null;
 };
 
-// ============ CONSTANTS ============
-const ENSURE_INBOX_TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS Shop_Request_Inbox (
-    RequestID INT AUTO_INCREMENT PRIMARY KEY,
-    FullName VARCHAR(255) NOT NULL,
-    Email VARCHAR(190) NOT NULL,
-    PhoneNumber VARCHAR(30) NOT NULL,
-    Address VARCHAR(255) NOT NULL,
-    Message TEXT NULL,
-    Status ENUM('pending','reviewed','approved','rejected') NOT NULL DEFAULT 'pending',
-    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-`;
+
 
 const COMBINED_SHOP_REQUESTS_QUERY = `
   SELECT
@@ -111,18 +100,7 @@ const adminModel = {
    */
   async listUsers(): Promise<UserRow[]> {
     const rows = await queryService.execQueryList(
-      `
-        SELECT
-          u.UserID AS user_code,
-          u.LevelCode AS level_code,
-          u.FullName AS full_name,
-          u.Email AS email,
-          u.PasswordHash AS password_hash,
-          u.IsActive AS is_active
-        FROM Users u
-        WHERE u._destroy IS NULL OR u._destroy = 0
-        ORDER BY u.UserID DESC
-      `,
+      ADMIN_QUERIES.LIST_USERS,
       []
     );
 
@@ -134,15 +112,7 @@ const adminModel = {
    */
   async listUserLevels() {
     const rows = await queryService.execQueryList(
-      `
-        SELECT
-          LevelCode AS level_code,
-          LevelType AS level_type,
-          isActive AS is_active
-        FROM Users_Level
-        WHERE _destroy IS NULL OR _destroy = 0
-        ORDER BY LevelCode ASC
-      `,
+      ADMIN_QUERIES.LIST_USER_LEVELS,
       []
     );
 
@@ -158,19 +128,7 @@ const adminModel = {
    */
   async getUserById(userId: number): Promise<UserRow | null> {
     const rows = (await queryService.execQueryList(
-      `
-        SELECT
-          u.UserID AS user_code,
-          u.LevelCode AS level_code,
-          u.FullName AS full_name,
-          u.Email AS email,
-          u.PasswordHash AS password_hash,
-          u.IsActive AS is_active
-        FROM Users u
-        WHERE u.UserID = ?
-          AND (u._destroy IS NULL OR u._destroy = 0)
-        LIMIT 1
-      `,
+      ADMIN_QUERIES.GET_USER_BY_ID,
       [userId]
     )) as UserRow[];
 
@@ -182,20 +140,12 @@ const adminModel = {
    */
   async updateUserStatus(userId: number, isActive: boolean): Promise<void> {
     await queryService.execQuery(
-      `
-        UPDATE Users
-        SET IsActive = ?, UpdateAt = NOW()
-        WHERE UserID = ?
-        LIMIT 1
-      `,
+      ADMIN_QUERIES.UPDATE_USER_STATUS,
       [isActive ? 1 : 0, userId]
     );
 
     await queryService.execQuery(
-      `UPDATE Shops
-        SET IsApproved =?, UpdateAt = NOW()
-        WHERE UserID = ?
-        `,
+      ADMIN_QUERIES.UPDATE_SHOP_STATUS,
       [isActive ? "Y" : "N", userId]
     );
   },
@@ -205,16 +155,7 @@ const adminModel = {
    */
   async listShops(): Promise<ShopRow[]> {
     const shops = (await queryService.execQueryList(
-      `
-        SELECT
-          s.ShopCode AS shop_code,
-          s.UserID AS user_code,
-          s.ShopName AS shop_name,
-          s.Address AS address,
-          s.IsApproved AS isapproved
-        FROM Shops s
-        ORDER BY s.ShopCode DESC
-      `,
+      ADMIN_QUERIES.LIST_SHOPS,
       []
     )) as ShopRow[];
 
@@ -228,16 +169,7 @@ const adminModel = {
     if (!shopCodes.length) return [];
 
     const banks = (await queryService.execQueryList(
-      `
-        SELECT
-          ShopCode AS shop_code,
-          BankName AS bank_name,
-          AccountNumber AS bank_account_number,
-          IsDefault AS is_default
-        FROM Shop_Bank_Accounts
-        WHERE ShopCode IN (?)
-        ORDER BY ShopCode, IsDefault DESC, ShopBankID ASC
-      `,
+      ADMIN_QUERIES.GET_SHOP_BANKS,
       [shopCodes]
     )) as ShopBankRow[];
 
@@ -248,7 +180,7 @@ const adminModel = {
    * Ensure shop request inbox table exists
    */
   async ensureInboxTable(): Promise<void> {
-    await queryService.execQuery(ENSURE_INBOX_TABLE_SQL, []);
+    await queryService.execQuery(ADMIN_QUERIES.ENSURE_INBOX_TABLE, []);
   },
 
   /**
@@ -258,7 +190,7 @@ const adminModel = {
     await adminModel.ensureInboxTable();
 
     const rows = await queryService.execQueryList(
-      `${COMBINED_SHOP_REQUESTS_QUERY} ORDER BY created_at DESC, request_id DESC`,
+      `${ADMIN_QUERIES.LIST_SHOP_REQUESTS}`,
       []
     );
 
@@ -272,7 +204,7 @@ const adminModel = {
     await adminModel.ensureInboxTable();
 
     const rows = (await queryService.execQueryList(
-      `${COMBINED_SHOP_REQUESTS_QUERY} WHERE request_id = ? ORDER BY created_at DESC LIMIT 1`,
+      `${ADMIN_QUERIES.GET_SHOP_REQUEST_BY_ID}`,
       [requestId]
     )) as ShopRequestRow[];
 
@@ -320,29 +252,10 @@ const adminModel = {
     }
 
     const whereClause = clauses.length ? clauses.join(" AND ") : "1=1";
+    const query = ADMIN_QUERIES.LIST_FINANCE_BOOKINGS.replace("{{WHERE}}", whereClause);
 
     const items = (await queryService.execQueryList(
-      `SELECT
-         b.BookingCode AS booking_code,
-         b.FieldCode AS field_code,
-         f.FieldName AS field_name,
-         b.CustomerUserID AS customer_user_id,
-         b.CustomerName AS customer_name,
-         b.CustomerEmail AS customer_email,
-         b.CustomerPhone AS customer_phone,
-         b.TotalPrice AS total_price,
-         b.PlatformFee AS platform_fee,
-         b.NetToShop AS net_to_shop,
-         b.BookingStatus AS booking_status,
-         b.PaymentStatus AS payment_status,
-         b.CheckinCode AS checkin_code,
-         DATE_FORMAT(b.CreateAt, '%Y-%m-%d %H:%i:%s') AS create_at,
-         b.QuantityID AS quantity_id
-       FROM Bookings b
-       LEFT JOIN Fields f ON f.FieldCode = b.FieldCode
-       WHERE ${whereClause}
-       ORDER BY b.CreateAt DESC
-       LIMIT ? OFFSET ?`,
+      query,
       [...params, limit, offset]
     )) as FinanceBookingRow[];
 
@@ -388,17 +301,10 @@ const adminModel = {
     }
 
     const whereClause = clauses.length ? clauses.join(" AND ") : "1=1";
+    const query = ADMIN_QUERIES.GET_FINANCE_SUMMARY.replace("{{WHERE}}", whereClause);
 
     const summaryRows = (await queryService.execQueryList(
-      `SELECT
-         COUNT(*) AS total_bookings,
-         COALESCE(SUM(CASE WHEN b.BookingStatus = 'confirmed' THEN 1 ELSE 0 END), 0) AS confirmed_bookings,
-         COALESCE(SUM(CASE WHEN b.PaymentStatus = 'paid' THEN 1 ELSE 0 END), 0) AS paid_bookings,
-         COALESCE(SUM(b.TotalPrice), 0) AS total_revenue,
-         COALESCE(SUM(b.PlatformFee), 0) AS platform_fee,
-         COALESCE(SUM(b.NetToShop), 0) AS net_to_shop
-       FROM Bookings b
-       WHERE ${whereClause}`,
+      query,
       params
     )) as Array<{
       total_bookings: number;
@@ -467,9 +373,10 @@ const adminModel = {
     }
 
     const whereClause = clauses.length ? clauses.join(" AND ") : "1=1";
+    const query = ADMIN_QUERIES.COUNT_FINANCE_BOOKINGS.replace("{{WHERE}}", whereClause);
 
     const countRows = (await queryService.execQueryList(
-      `SELECT COUNT(*) AS total FROM Bookings b WHERE ${whereClause}`,
+      query,
       params
     )) as Array<{ total: number }>;
 
@@ -515,19 +422,10 @@ const adminModel = {
     }
 
     const whereClause = clauses.length ? clauses.join(" AND ") : "1=1";
+    const query = ADMIN_QUERIES.GET_FINANCE_BOOKINGS_SUMMARY.replace("{{WHERE}}", whereClause);
 
     const summaryRows = (await queryService.execQueryList(
-      `SELECT
-         COUNT(*) AS total_records,
-         COALESCE(SUM(b.TotalPrice), 0) AS total_total_price,
-         COALESCE(SUM(b.PlatformFee), 0) AS total_platform_fee,
-         COALESCE(SUM(b.NetToShop), 0) AS total_net_to_shop,
-         COALESCE(SUM(CASE WHEN b.CheckinCode IS NOT NULL AND b.CheckinCode <> '' THEN 1 ELSE 0 END), 0) AS total_checkins,
-         COALESCE(SUM(CASE WHEN b.QuantityID IS NOT NULL THEN 1 ELSE 0 END), 0) AS total_quantity_ids,
-         DATE_FORMAT(MIN(b.CreateAt), '%Y-%m-%d %H:%i:%s') AS first_create_at,
-         DATE_FORMAT(MAX(b.CreateAt), '%Y-%m-%d %H:%i:%s') AS last_create_at
-       FROM Bookings b
-       WHERE ${whereClause}`,
+      query,
       params
     )) as Array<{
       total_records?: number | null;
@@ -565,36 +463,11 @@ const adminModel = {
       "admin_update_shop_request_status",
       async (connection) => {
         // Ensure inbox table exists
-        await connection.query(
-          `CREATE TABLE IF NOT EXISTS Shop_Request_Inbox (
-            RequestID INT AUTO_INCREMENT PRIMARY KEY,
-            FullName VARCHAR(255) NOT NULL,
-            Email VARCHAR(190) NOT NULL,
-            PhoneNumber VARCHAR(30) NOT NULL,
-            Address VARCHAR(255) NOT NULL,
-            Message TEXT NULL,
-            Status ENUM('pending','reviewed','approved','rejected') NOT NULL DEFAULT 'pending',
-            CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-        );
+        await connection.query(ADMIN_QUERIES.ENSURE_INBOX_TABLE_TX);
 
         // Get existing request
         const [existingRows] = await connection.query<RowDataPacket[]>(
-          `SELECT
-             RequestID AS request_id,
-             FullName AS full_name,
-             Email AS email,
-             PhoneNumber AS phone_number,
-             Address AS address,
-             Message AS message,
-             Status AS status,
-             CreatedAt AS created_at,
-             NULL AS processed_at,
-             NULL AS admin_note,
-             'inbox' AS source
-           FROM Shop_Request_Inbox
-           WHERE RequestID = ?
-           LIMIT 1`,
+          ADMIN_QUERIES.GET_INBOX_REQUEST,
           [requestId]
         );
 
@@ -613,10 +486,7 @@ const adminModel = {
           }
 
           const [userRows] = await connection.query<RowDataPacket[]>(
-            `SELECT UserID, LevelCode
-             FROM Users
-             WHERE LOWER(Email) = LOWER(?)
-             LIMIT 1`,
+            ADMIN_QUERIES.GET_USER_BY_EMAIL,
             [requestEmail.toLowerCase()]
           );
 
@@ -626,10 +496,7 @@ const adminModel = {
           }
 
           const [levelRows] = await connection.query<RowDataPacket[]>(
-            `SELECT LevelCode
-             FROM Users_Level
-             WHERE LevelType = 'shop'
-             LIMIT 1`
+            ADMIN_QUERIES.GET_SHOP_LEVEL
           );
 
           const SHOP_LEVEL_FALLBACK = 2;
@@ -639,10 +506,7 @@ const adminModel = {
 
           if (Number(user.LevelCode) !== targetLevelCode) {
             await connection.query<ResultSetHeader>(
-              `UPDATE Users
-               SET LevelCode = ?, UpdateAt = NOW()
-               WHERE UserID = ?
-               LIMIT 1`,
+              ADMIN_QUERIES.UPDATE_USER_LEVEL,
               [targetLevelCode, user.UserID]
             );
           }
@@ -650,29 +514,13 @@ const adminModel = {
 
         // Update request status
         const [inboxUpdate] = await connection.query<ResultSetHeader>(
-          `UPDATE Shop_Request_Inbox
-           SET Status = ?
-           WHERE RequestID = ?`,
+          ADMIN_QUERIES.UPDATE_INBOX_REQUEST_STATUS,
           [status, requestId]
         );
 
         if (inboxUpdate.affectedRows > 0) {
           const [rows] = await connection.query<RowDataPacket[]>(
-            `SELECT
-               RequestID AS request_id,
-               FullName AS full_name,
-               Email AS email,
-               PhoneNumber AS phone_number,
-               Address AS address,
-               Message AS message,
-               Status AS status,
-               CreatedAt AS created_at,
-               NULL AS processed_at,
-               NULL AS admin_note,
-               'inbox' AS source
-             FROM Shop_Request_Inbox
-             WHERE RequestID = ?
-             LIMIT 1`,
+            ADMIN_QUERIES.GET_UPDATED_INBOX_REQUEST,
             [requestId]
           );
           return (rows?.[0] as ShopRequestRow) ?? null;

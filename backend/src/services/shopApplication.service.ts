@@ -1,4 +1,4 @@
-import queryService from "./query";
+import queryService from "../core/database";
 import shopApplicationModel from "../models/shopApplication.model";
 
 type CreateShopRequestPayload = {

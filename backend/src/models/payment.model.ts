@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { PAYMENT_QUERIES } from "../queries/payment.queries";
 
 // ============ TYPES ============
 export type PaymentRow = {
@@ -15,7 +16,42 @@ export type PaymentRow = {
   CreateAt?: string | Date;
   UpdateAt?: string | Date;
   PaidAt?: string | Date | null;
+  TransactionCode?: string | null;
 };
+
+export interface BookingInfo extends RowDataPacket {
+  BookingCode: string;
+  FieldCode: number;
+  ShopCode: number;
+  Amount?: number;
+  PaymentStatus?: string;
+  [key: string]: any;
+}
+
+export interface BookingStatus extends RowDataPacket {
+  BookingCode: number;
+  TotalPrice: number;
+  PaymentStatus: string;
+}
+
+export interface BookingSlotSummary extends RowDataPacket {
+  slot_id: number;
+  quantity_id: number | null;
+  quantity_number: number | null;
+  play_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+}
+
+export interface BookingResultRow extends RowDataPacket {
+  BookingCode: number;
+  FieldCode: number;
+  FieldName: string;
+  ShopCode: number;
+  TotalPrice: number;
+  PaymentStatus: string;
+}
 
 // ============ PAYMENT MODEL ============
 const paymentModel = {
@@ -29,14 +65,7 @@ const paymentModel = {
     paymentMethod: string = "bank_transfer"
   ): Promise<PaymentRow> {
     const [result] = await queryService.query<ResultSetHeader>(
-      `INSERT INTO Payments_Admin (
-        BookingCode,
-        AdminBankID,
-        PaymentMethod,
-        Amount,
-        PaymentStatus,
-        CreateAt
-      ) VALUES (?, ?, ?, ?, 'pending', NOW())`,
+      PAYMENT_QUERIES.CREATE_PAYMENT,
       [bookingCode, adminBankID, paymentMethod, totalPrice]
     );
 
@@ -55,11 +84,11 @@ const paymentModel = {
    */
   async getById(paymentID: number): Promise<PaymentRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT * FROM Payments_Admin WHERE PaymentID = ?`,
+      PAYMENT_QUERIES.GET_PAYMENT_BY_ID,
       [paymentID]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as PaymentRow) || null;
   },
 
   /**
@@ -69,11 +98,11 @@ const paymentModel = {
     momoTransactionID: string
   ): Promise<PaymentRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT * FROM Payments_Admin WHERE MomoTransactionID = ?`,
+      PAYMENT_QUERIES.GET_PAYMENT_BY_MOMO_TRANSACTION,
       [momoTransactionID]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as PaymentRow) || null;
   },
 
   /**
@@ -81,11 +110,11 @@ const paymentModel = {
    */
   async getByMomoOrderId(momoOrderId: string): Promise<PaymentRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT * FROM Payments_Admin WHERE MomoOrderId = ?`,
+      PAYMENT_QUERIES.GET_PAYMENT_BY_MOMO_ORDER,
       [momoOrderId]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as PaymentRow) || null;
   },
 
   /**
@@ -95,11 +124,11 @@ const paymentModel = {
     bookingCode: string | number
   ): Promise<PaymentRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT * FROM Payments_Admin WHERE BookingCode = ? ORDER BY UpdateAt DESC, PaymentID DESC LIMIT 1`,
+      PAYMENT_QUERIES.GET_PAYMENT_BY_BOOKING,
       [bookingCode]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as PaymentRow) || null;
   },
 
   /**
@@ -110,43 +139,48 @@ const paymentModel = {
     status: "paid" | "failed" | "refunded",
     momoTransactionID?: string,
     momoRequestID?: string
-  ): Promise<boolean> {
-    const [result] = await queryService.query<ResultSetHeader>(
-      `UPDATE Payments_Admin
-       SET PaymentStatus = ?,
-           MomoTransactionID = COALESCE(?, MomoTransactionID),
-           MomoRequestID = COALESCE(?, MomoRequestID),
-           PaidAt = NOW(),
-           UpdateAt = NOW()
-       WHERE PaymentID = ?`,
+  ) {
+    await queryService.query<ResultSetHeader>(
+      PAYMENT_QUERIES.UPDATE_PAYMENT_STATUS,
       [status, momoTransactionID || null, momoRequestID || null, paymentID]
     );
-
-    return result.affectedRows > 0;
+    return { PaymentID: paymentID, PaymentStatus: status };
   },
 
   /**
-   * Get booking info for payment
+   * Get booking info by payment ID
    */
-  async getBookingInfoByPaymentId(paymentID: number) {
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT 
-         b.BookingStatus,
-         b.FieldCode,
-         f.ShopCode,
-         b.CustomerEmail,
-         b.CustomerName,
-         b.CheckinCode,
-         f.FieldName,
-         b.BookingCode
-       FROM Bookings b
-       JOIN Fields f ON b.FieldCode = f.FieldCode
-       JOIN Payments_Admin p ON b.BookingCode = p.BookingCode
-       WHERE p.PaymentID = ?`,
+  async getBookingInfoByPaymentId(paymentID: number): Promise<BookingInfo | null> {
+    const [rows] = await queryService.query<BookingInfo[]>(
+      PAYMENT_QUERIES.GET_BOOKING_INFO_BY_PAYMENT,
       [paymentID]
     );
 
+    return (rows?.[0] as BookingInfo) || null;
+  },
+
+  /**
+   * Get booking with shop info
+   */
+  async getBookingWithShop(bookingCode: number): Promise<any | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PAYMENT_QUERIES.GET_BOOKING_WITH_SHOP,
+      [bookingCode]
+    );
+
     return rows?.[0] || null;
+  },
+
+  /**
+   * Get default admin bank account
+   */
+  async getDefaultAdminBankAccount(): Promise<number | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PAYMENT_QUERIES.GET_DEFAULT_ADMIN_BANK,
+      []
+    );
+
+    return rows?.[0]?.AdminBankID || null;
   },
 
   /**
@@ -156,15 +190,10 @@ const paymentModel = {
     bookingCode: string | number,
     paymentID: number
   ): Promise<void> {
-    await queryService.execQuery(
-      `UPDATE Bookings 
-       SET BookingStatus = 'confirmed',
-           PaymentStatus = 'paid',
-           PaymentID = COALESCE(PaymentID, ?),
-           UpdateAt = NOW()
-       WHERE BookingCode = ?`,
-      [paymentID, bookingCode]
-    );
+    await queryService.execQuery(PAYMENT_QUERIES.CONFIRM_BOOKING_STATUS, [
+      paymentID,
+      bookingCode,
+    ]);
   },
 
   /**
@@ -174,9 +203,7 @@ const paymentModel = {
     bookingCode: string | number
   ): Promise<void> {
     await queryService.execQuery(
-      `UPDATE Booking_Slots 
-       SET Status = 'booked', UpdateAt = NOW()
-       WHERE BookingCode = ? AND Status = 'pending'`,
+      PAYMENT_QUERIES.UPDATE_BOOKING_SLOTS_TO_BOOKED,
       [bookingCode]
     );
   },
@@ -186,9 +213,7 @@ const paymentModel = {
    */
   async updateFieldSlotsToBooked(bookingCode: string | number): Promise<void> {
     await queryService.execQuery(
-      `UPDATE Field_Slots 
-       SET Status = 'booked', HoldExpiresAt = NULL, UpdateAt = NOW()
-       WHERE BookingCode = ? AND Status = 'held'`,
+      PAYMENT_QUERIES.UPDATE_FIELD_SLOTS_TO_BOOKED,
       [bookingCode]
     );
   },
@@ -198,7 +223,7 @@ const paymentModel = {
    */
   async getPaymentAmount(paymentID: number): Promise<number | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT Amount FROM Payments_Admin WHERE PaymentID = ?`,
+      PAYMENT_QUERIES.GET_PAYMENT_AMOUNT,
       [paymentID]
     );
 
@@ -209,27 +234,19 @@ const paymentModel = {
    * Insert wallet credit (shop wallet)
    */
   async creditShopWallet(shopCode: number, amount: number): Promise<void> {
-    await queryService.execQuery(
-      `INSERT INTO Shop_Wallets (ShopCode, Balance, CreateAt, UpdateAt)
-       VALUES (?, ?, NOW(), NOW())
-       ON DUPLICATE KEY UPDATE 
-         Balance = Balance + ?,
-         UpdateAt = NOW()`,
-      [shopCode, amount, amount]
-    );
+    await queryService.execQuery(PAYMENT_QUERIES.UPSERT_SHOP_WALLET, [
+      shopCode,
+      amount,
+    ]);
   },
 
   /**
    * Increment field rent count
    */
   async incrementFieldRent(fieldCode: number): Promise<void> {
-    await queryService.execQuery(
-      `UPDATE Fields
-       SET Rent = Rent + 1,
-           UpdateAt = NOW()
-       WHERE FieldCode = ?`,
-      [fieldCode]
-    );
+    await queryService.execQuery(PAYMENT_QUERIES.INCREMENT_FIELD_RENT, [
+      fieldCode,
+    ]);
   },
 
   /**
@@ -243,18 +260,14 @@ const paymentModel = {
     note: string,
     status: string = "completed"
   ): Promise<void> {
-    await queryService.execQuery(
-      `INSERT INTO Wallet_Transactions (
-        ShopCode,
-        BookingCode,
-        Type,
-        Amount,
-        Note,
-        Status,
-        CreateAt
-      ) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [shopCode, bookingCode, type, amount, note, status]
-    );
+    await queryService.execQuery(PAYMENT_QUERIES.CREATE_WALLET_TRANSACTION, [
+      shopCode,
+      bookingCode,
+      type,
+      amount,
+      note,
+      status,
+    ]);
   },
 
   /**
@@ -262,17 +275,7 @@ const paymentModel = {
    */
   async getBookingSlotForEmail(bookingCode: string | number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT b.BookingCode, b.CustomerEmail, b.CustomerName, b.CheckinCode,
-              f.FieldName, 
-              DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
-              DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
-              DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime
-       FROM Bookings b
-       JOIN Fields f ON b.FieldCode = f.FieldCode
-       JOIN Booking_Slots bs ON b.BookingCode = bs.BookingCode
-       WHERE b.BookingCode = ?
-       ORDER BY bs.PlayDate, bs.StartTime
-       LIMIT 1`,
+      PAYMENT_QUERIES.GET_BOOKING_SLOT_FOR_EMAIL,
       [bookingCode]
     );
 
@@ -291,39 +294,102 @@ const paymentModel = {
     resultCode?: number,
     resultMessage?: string
   ): Promise<void> {
-    await queryService.execQuery(
-      `INSERT INTO Payment_Logs (
-        PaymentID,
-        Action,
-        RequestData,
-        ResponseData,
-        MomoTransactionID,
-        ResultCode,
-        ResultMessage,
-        CreateAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
-        paymentID,
-        action,
-        requestData ? JSON.stringify(requestData) : null,
-        responseData ? JSON.stringify(responseData) : null,
-        momoTransactionID || null,
-        resultCode || null,
-        resultMessage || null,
-      ]
-    );
+    await queryService.execQuery(PAYMENT_QUERIES.INSERT_PAYMENT_LOG, [
+      paymentID,
+      action,
+      requestData ? JSON.stringify(requestData) : null,
+      responseData ? JSON.stringify(responseData) : null,
+      momoTransactionID || null,
+      resultCode || null,
+      resultMessage || null,
+    ]);
   },
 
   /**
-   * Get default admin bank account
+   * Lấy trạng thái thanh toán của booking
    */
-  async getDefaultAdminBank(): Promise<{ AdminBankID: number } | null> {
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT AdminBankID FROM Admin_Bank_Accounts WHERE IsDefault = 'Y' LIMIT 1`,
-      []
+  async getBookingStatus(
+    bookingCode: number
+  ): Promise<{ BookingCode: number; TotalPrice: number; PaymentStatus: string } | null> {
+    const [rows] = await queryService.query<BookingStatus[]>(
+      PAYMENT_QUERIES.GET_BOOKING_STATUS,
+      [bookingCode]
     );
+    const booking = rows?.[0];
+    if (!booking) return null;
+    return {
+      BookingCode: Number(booking.BookingCode),
+      TotalPrice: Number(booking.TotalPrice),
+      PaymentStatus: booking.PaymentStatus,
+    };
+  },
 
+  /**
+   * Kiểm tra log thanh toán theo action + transaction
+   */
+  async hasPaymentLog(
+    paymentId: number,
+    action: string,
+    momoTransactionId?: string
+  ): Promise<boolean> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PAYMENT_QUERIES.CHECK_PAYMENT_LOG_BY_ACTION,
+      [paymentId, action]
+    );
+    return !!rows?.[0];
+  },
+
+  /**
+   * Kiểm tra log theo transaction id
+   */
+  async hasPaymentLogByTransaction(
+    action: string,
+    momoTransactionId: string
+  ): Promise<boolean> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PAYMENT_QUERIES.CHECK_PAYMENT_LOG_BY_TRANSACTION,
+      [action, momoTransactionId]
+    );
+    return !!rows?.[0];
+  },
+
+  /**
+   * Tìm payment pending theo số tiền
+   */
+  async findPendingPaymentByAmount(
+    amount: number
+  ): Promise<PaymentRow | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PAYMENT_QUERIES.FIND_PENDING_PAYMENT_BY_AMOUNT,
+      [amount]
+    );
+    return (rows?.[0] as PaymentRow) || null;
+  },
+
+  /**
+   * Lấy thông tin booking để trả kết quả thanh toán
+   */
+  async getBookingForResult(
+    bookingCode: number
+  ): Promise<BookingResultRow | null> {
+    const [rows] = await queryService.query<BookingResultRow[]>(
+      PAYMENT_QUERIES.GET_BOOKING_FOR_RESULT,
+      [bookingCode]
+    );
     return rows?.[0] || null;
+  },
+
+  /**
+   * Lấy danh sách slot của booking
+   */
+  async listSlotsByBooking(
+    bookingCode: number
+  ): Promise<BookingSlotSummary[]> {
+    const [rows] = await queryService.query<BookingSlotSummary[]>(
+      PAYMENT_QUERIES.LIST_SLOTS_BY_BOOKING,
+      [bookingCode]
+    );
+    return rows || [];
   },
 };
 

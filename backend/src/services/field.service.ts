@@ -9,7 +9,6 @@ import fieldModel, {
   FieldSorting,
 } from "../models/field.model";
 import s3Service from "./s3.service";
-import queryService from "./query";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import localUploadService from "./localUpload.service";
@@ -28,7 +27,7 @@ type ListParams = {
   shopCode?: number | string;
   page?: number;
   pageSize?: number;
-  sortBy?: "price" | "rating" | "name" | "rent";
+  sortBy?: string;
   sortDir?: "asc" | "desc";
   status?: FieldStatusDb | string;
   shopStatus?: string;
@@ -308,10 +307,20 @@ const fieldService = {
       shopActive: typeof params.shopActive === "number" ? params.shopActive : 1,
     };
 
+    const allowedSorts = new Set(["price", "rating", "name", "rent"]);
+    const sortBy =
+      params.sortBy && allowedSorts.has(params.sortBy)
+        ? params.sortBy
+        : undefined;
+    const sortDir =
+      params.sortDir === "desc" || params.sortDir === "asc"
+        ? params.sortDir
+        : undefined;
+
     const pagination: FieldPagination = { limit: pageSize, offset };
     const sorting: FieldSorting = {
-      sortBy: params.sortBy,
-      sortDir: params.sortDir,
+      sortBy,
+      sortDir,
     };
 
     try {
@@ -376,6 +385,18 @@ const fieldService = {
         hasPrev: page > 1,
       };
 
+      const appliedFilters = {
+        search: params.search,
+        sportType: params.sportType,
+        location: params.location,
+        priceMin: params.priceMin,
+        priceMax: params.priceMax,
+        status: params.status ?? "active",
+        shopStatus: params.shopStatus,
+        sortBy,
+        sortDir,
+      };
+
       return {
         items,
         total,
@@ -409,6 +430,10 @@ const fieldService = {
           },
         },
         pagination: paginationMeta,
+        meta: {
+          pagination: paginationMeta,
+          filters: appliedFilters,
+        },
       };
     } catch (error) {
       console.error("Error fetching fields:", error);
@@ -856,7 +881,7 @@ const fieldService = {
     const localStored: Array<{ absolutePath: string; publicUrl: string }> = [];
 
     try {
-      const fieldCode = await queryService.execTransaction(
+      const fieldCode = await fieldModel.withTransaction(
         "fieldService.createForShop",
         async (conn) => {
           const newFieldCode = await fieldModel.insertField(conn, {
@@ -1023,6 +1048,55 @@ const fieldService = {
     }
 
     return this.getById(fieldId);
+  },
+
+  async getStats(fieldCode: number) {
+    const stats = await fieldModel.getFieldStats(fieldCode);
+    if (!stats) {
+      throw new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại");
+    }
+    return stats;
+  },
+
+  async listWithRent(
+    shopCode: number,
+    options: { limit: number; offset: number }
+  ) {
+    const limit = Math.min(Math.max(options.limit, 1), 100);
+    const offset = Math.max(0, options.offset);
+
+    const [rows, total] = await Promise.all([
+      fieldModel.listFieldsWithRent(shopCode, limit, offset),
+      fieldModel.countFieldsByShop(shopCode),
+    ]);
+
+    return {
+      data: rows,
+      pagination: {
+        limit,
+        offset,
+        total,
+      },
+    };
+  },
+
+  async syncFieldRent(fieldCode: number) {
+    const rent = await fieldModel.countConfirmedBookingsForField(fieldCode);
+    await fieldModel.updateFieldRent(fieldCode, rent);
+    return { FieldCode: fieldCode, Rent: rent };
+  },
+
+  async syncAllFieldsRent() {
+    const fieldCodes = await fieldModel.listAllFieldCodes();
+    let synced = 0;
+
+    for (const code of fieldCodes) {
+      const rent = await fieldModel.countConfirmedBookingsForField(code);
+      await fieldModel.updateFieldRent(code, rent);
+      synced += 1;
+    }
+
+    return { synced };
   },
 
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {

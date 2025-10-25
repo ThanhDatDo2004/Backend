@@ -1,6 +1,6 @@
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/apiErrors";
-import queryService from "./query";
+import queryService from "../core/database";
 import shopPromotionModel from "../models/shopPromotion.model";
 
 export type ShopPromotionStatus =

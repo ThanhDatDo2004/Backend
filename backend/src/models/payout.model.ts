@@ -1,5 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { PAYOUT_QUERIES } from "../queries/payout.queries";
 
 // ============ TYPES ============
 export type ShopRow = {
@@ -33,7 +34,7 @@ const payoutModel = {
    */
   async getShop(shopCode: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT ShopCode, ShopName, UserID FROM Shops WHERE ShopCode = ?`,
+      PAYOUT_QUERIES.GET_SHOP,
       [shopCode]
     );
     return rows?.[0] || null;
@@ -44,7 +45,7 @@ const payoutModel = {
    */
   async getUser(userId: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT PasswordHash FROM Users WHERE UserID = ?`,
+      PAYOUT_QUERIES.GET_USER,
       [userId]
     );
     return rows?.[0] || null;
@@ -58,14 +59,10 @@ const payoutModel = {
     let params: any[];
 
     if (!shopBankID) {
-      query = `SELECT ShopBankID, BankName, AccountNumber, AccountHolder, IsDefault 
-               FROM Shop_Bank_Accounts 
-               WHERE ShopCode = ? AND (IsDefault = 'Y' OR IsDefault = 1)`;
+      query = PAYOUT_QUERIES.GET_DEFAULT_BANK_ACCOUNT;
       params = [shopCode];
     } else {
-      query = `SELECT ShopBankID, BankName, AccountNumber, AccountNumber, AccountHolder, IsDefault 
-               FROM Shop_Bank_Accounts 
-               WHERE ShopBankID = ? AND ShopCode = ?`;
+      query = PAYOUT_QUERIES.GET_BANK_ACCOUNT_BY_ID;
       params = [shopBankID, shopCode];
     }
 
@@ -78,7 +75,7 @@ const payoutModel = {
    */
   async getAllBankAccounts(shopCode: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT ShopBankID, BankName, IsDefault, ShopCode FROM Shop_Bank_Accounts WHERE ShopCode = ?`,
+      PAYOUT_QUERIES.GET_ALL_BANK_ACCOUNTS,
       [shopCode]
     );
     return rows || [];
@@ -89,7 +86,7 @@ const payoutModel = {
    */
   async getWalletBalance(shopCode: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT Balance FROM Shop_Wallets WHERE ShopCode = ?`,
+      PAYOUT_QUERIES.GET_WALLET_BALANCE,
       [shopCode]
     );
     return rows?.[0]?.Balance || 0;
@@ -105,15 +102,7 @@ const payoutModel = {
     note?: string
   ): Promise<number> {
     const [result] = await queryService.query<ResultSetHeader>(
-      `INSERT INTO Payout_Requests (
-        ShopCode,
-        ShopBankID,
-        Amount,
-        Status,
-        Note,
-        RequestedAt,
-        CreateAt
-      ) VALUES (?, ?, ?, 'requested', ?, NOW(), NOW())`,
+      PAYOUT_QUERIES.CREATE_PAYOUT_REQUEST,
       [shopCode, shopBankID, amount, note || null]
     );
 
@@ -124,13 +113,10 @@ const payoutModel = {
    * Deduct from wallet
    */
   async deductWallet(shopCode: number, amount: number): Promise<void> {
-    await queryService.execQuery(
-      `UPDATE Shop_Wallets
-       SET Balance = Balance - ?,
-           UpdateAt = NOW()
-       WHERE ShopCode = ?`,
-      [amount, shopCode]
-    );
+    await queryService.execQuery(PAYOUT_QUERIES.DEDUCT_WALLET, [
+      amount,
+      shopCode,
+    ]);
   },
 
   /**
@@ -144,18 +130,14 @@ const payoutModel = {
     status: string,
     payoutID: number
   ): Promise<void> {
-    await queryService.execQuery(
-      `INSERT INTO Wallet_Transactions (
-        ShopCode,
-        Type,
-        Amount,
-        Note,
-        Status,
-        PayoutID,
-        CreateAt
-      ) VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-      [shopCode, type, amount, note, status, payoutID]
-    );
+    await queryService.execQuery(PAYOUT_QUERIES.CREATE_WALLET_TRANSACTION, [
+      shopCode,
+      type,
+      amount,
+      note,
+      status,
+      payoutID,
+    ]);
   },
 
   /**
@@ -163,11 +145,7 @@ const payoutModel = {
    */
   async getPayoutByID(payoutID: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT pr.*, s.ShopName, sba.BankName, sba.AccountNumber, sba.AccountHolder, sba.IsDefault
-       FROM Payout_Requests pr
-       JOIN Shops s ON pr.ShopCode = s.ShopCode
-       JOIN Shop_Bank_Accounts sba ON pr.ShopBankID = sba.ShopBankID
-       WHERE pr.PayoutID = ?`,
+      PAYOUT_QUERIES.GET_PAYOUT_BY_ID,
       [payoutID]
     );
     return rows?.[0] || null;
@@ -182,30 +160,25 @@ const payoutModel = {
     limit: number = 10,
     offset: number = 0
   ) {
-    let query = `SELECT pr.*, s.ShopName, sba.BankName, sba.AccountNumber
-                 FROM Payout_Requests pr
-                 JOIN Shops s ON pr.ShopCode = s.ShopCode
-                 JOIN Shop_Bank_Accounts sba ON pr.ShopBankID = sba.ShopBankID
-                 WHERE pr.ShopCode = ?`;
-    const params: any[] = [shopCode];
+    const statusClause = status ? " AND pr.Status = ?" : "";
+    const listQuery = PAYOUT_QUERIES.LIST_PAYOUTS_BY_SHOP.replace(
+      "{{STATUS}}",
+      statusClause
+    );
+    const listParams = status
+      ? [shopCode, status, limit, offset]
+      : [shopCode, limit, offset];
 
-    if (status) {
-      query += ` AND pr.Status = ?`;
-      params.push(status);
-    }
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      listQuery,
+      listParams
+    );
 
-    query += ` ORDER BY pr.RequestedAt DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM Payout_Requests WHERE ShopCode = ?`;
-    const countParams: any[] = [shopCode];
-    if (status) {
-      countQuery += ` AND Status = ?`;
-      countParams.push(status);
-    }
+    const countQuery = PAYOUT_QUERIES.COUNT_PAYOUTS_BY_SHOP.replace(
+      "{{STATUS}}",
+      status ? " AND Status = ?" : ""
+    );
+    const countParams = status ? [shopCode, status] : [shopCode];
     const [countRows] = await queryService.query<RowDataPacket[]>(
       countQuery,
       countParams
@@ -224,43 +197,36 @@ const payoutModel = {
     limit: number = 10,
     offset: number = 0
   ) {
-    let query = `SELECT pr.*, s.ShopName, s.UserID, u.FullName, sba.BankName, sba.AccountNumber, sba.AccountHolder, sba.IsDefault
-                 FROM Payout_Requests pr
-                 JOIN Shops s ON pr.ShopCode = s.ShopCode
-                 JOIN Users u ON s.UserID = u.UserID
-                 JOIN Shop_Bank_Accounts sba ON pr.ShopBankID = sba.ShopBankID
-                 WHERE 1=1`;
+    const filters: string[] = [];
     const params: any[] = [];
 
     if (status) {
-      query += ` AND pr.Status = ?`;
+      filters.push("AND pr.Status = ?");
       params.push(status);
     }
 
     if (shopCode) {
-      query += ` AND pr.ShopCode = ?`;
+      filters.push("AND pr.ShopCode = ?");
       params.push(shopCode);
     }
 
-    query += ` ORDER BY pr.RequestedAt DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
+    const filterClause = filters.length ? ` ${filters.join(" ")}` : "";
+    const listQuery = PAYOUT_QUERIES.LIST_ALL_PAYOUTS.replace(
+      "{{FILTERS}}",
+      filterClause
+    );
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      listQuery,
+      [...params, limit, offset]
+    );
 
-    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM Payout_Requests WHERE 1=1`;
-    const countParams: any[] = [];
-    if (status) {
-      countQuery += ` AND Status = ?`;
-      countParams.push(status);
-    }
-    if (shopCode) {
-      countQuery += ` AND ShopCode = ?`;
-      countParams.push(shopCode);
-    }
+    const countQuery = PAYOUT_QUERIES.COUNT_ALL_PAYOUTS.replace(
+      "{{FILTERS}}",
+      filterClause
+    );
     const [countRows] = await queryService.query<RowDataPacket[]>(
       countQuery,
-      countParams
+      params
     );
     const total = countRows?.[0]?.total || 0;
 
@@ -272,12 +238,7 @@ const payoutModel = {
    */
   async approvePayoutRequest(payoutID: number): Promise<void> {
     await queryService.execQuery(
-      `UPDATE Payout_Requests
-       SET Status = 'paid',
-           ProcessedAt = NOW(),
-           TransactionCode = CONCAT('PAYOUT-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', LPAD(?, 6, '0')),
-           UpdateAt = NOW()
-       WHERE PayoutID = ?`,
+      PAYOUT_QUERIES.APPROVE_PAYOUT_REQUEST,
       [payoutID, payoutID]
     );
   },
@@ -287,9 +248,7 @@ const payoutModel = {
    */
   async completeWalletTransaction(payoutID: number): Promise<void> {
     await queryService.execQuery(
-      `UPDATE Wallet_Transactions
-       SET Status = 'completed'
-      WHERE PayoutID = ? AND Type = 'debit_payout'`,
+      PAYOUT_QUERIES.COMPLETE_WALLET_TRANSACTION,
       [payoutID]
     );
   },
@@ -298,15 +257,10 @@ const payoutModel = {
    * Reject payout request
    */
   async rejectPayoutRequest(payoutID: number, reason: string): Promise<void> {
-    await queryService.execQuery(
-      `UPDATE Payout_Requests
-       SET Status = 'rejected',
-           RejectionReason = ?,
-           ProcessedAt = NOW(),
-           UpdateAt = NOW()
-       WHERE PayoutID = ?`,
-      [reason, payoutID]
-    );
+    await queryService.execQuery(PAYOUT_QUERIES.REJECT_PAYOUT_REQUEST, [
+      reason,
+      payoutID,
+    ]);
   },
 
   /**
@@ -314,23 +268,21 @@ const payoutModel = {
    */
   async getWalletStats(shopCode: number) {
     const [walletRows] = await queryService.query<RowDataPacket[]>(
-      `SELECT Balance FROM Shop_Wallets WHERE ShopCode = ?`,
+      PAYOUT_QUERIES.GET_WALLET_STATS_BALANCE,
       [shopCode]
     );
     const balance = walletRows?.[0]?.Balance || 0;
 
     // Get total credited
     const [creditRows] = await queryService.query<RowDataPacket[]>(
-      `SELECT SUM(Amount) as total FROM Wallet_Transactions
-       WHERE ShopCode = ? AND Type = 'credit_settlement' AND Status = 'completed'`,
+      PAYOUT_QUERIES.GET_TOTAL_CREDITED,
       [shopCode]
     );
     const totalCredit = creditRows?.[0]?.total || 0;
 
     // Get total debited
     const [debitRows] = await queryService.query<RowDataPacket[]>(
-      `SELECT SUM(Amount) as total FROM Wallet_Transactions
-       WHERE ShopCode = ? AND Type = 'debit_payout' AND Status = 'completed'`,
+      PAYOUT_QUERIES.GET_TOTAL_DEBITED,
       [shopCode]
     );
     const totalDebit = debitRows?.[0]?.total || 0;

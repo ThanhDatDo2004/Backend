@@ -6,8 +6,6 @@ import { sendShopRequestEmail } from "../services/mail.service";
 import ApiError from "../utils/apiErrors";
 import shopApplicationService from "../services/shopApplication.service";
 import shopService from "../services/shop.service";
-import queryService from "../services/query";
-import { RowDataPacket } from "mysql2";
 import {
   listShopUtilities,
   replaceShopUtilities,
@@ -134,29 +132,9 @@ const shopController = {
     try {
       const userId = (req as any).user?.UserID;
 
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
-      }
-
-      const shopCode = shopRows[0].ShopCode;
-
-      const [bankAccounts] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopBankID, ShopCode, BankName, AccountNumber, AccountHolder, IsDefault,
-                CreateAt, UpdateAt
-         FROM Shop_Bank_Accounts
-         WHERE ShopCode = ?
-         ORDER BY CreateAt DESC`,
-        [shopCode]
-      );
-
       return apiResponse.success(
         res,
-        bankAccounts || [],
+        await shopService.listBankAccountsByUser(userId),
         "Lấy danh sách tài khoản ngân hàng thành công",
         StatusCodes.OK
       );
@@ -179,11 +157,8 @@ const shopController = {
         );
       }
 
-      const [shops] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE ShopCode = ?`,
-        [shopCode]
-      );
-      if (!shops?.[0]) {
+      const shop = await shopService.getByCode(shopCode);
+      if (!shop) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
         );
@@ -226,25 +201,7 @@ const shopController = {
         );
       }
 
-      const [shops] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode, UserID FROM Shops WHERE ShopCode = ?`,
-        [shopCode]
-      );
-      const shop = shops?.[0];
-      if (!shop) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
-        );
-      }
-
-      if (Number(shop.UserID) !== userId) {
-        return next(
-          new ApiError(
-            StatusCodes.FORBIDDEN,
-            "Bạn không có quyền cập nhật tiện ích cho shop này"
-          )
-        );
-      }
+      await shopService.ensureShopOwnership(shopCode, userId);
 
       const utilitiesInput = Array.isArray((req.body as any)?.utilities)
         ? (req.body as any).utilities.map((item: unknown) => String(item ?? "").trim())

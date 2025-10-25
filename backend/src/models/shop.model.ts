@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { SHOP_QUERIES } from "../queries/shop.queries";
 
 // ============ TYPES ============
 export type ShopDetailRow = {
@@ -27,33 +28,9 @@ const shopModel = {
   async getByUserId(userId: number) {
     if (!Number.isFinite(userId)) return null;
 
-    const rows = await queryService.execQueryList(
-      `
-        SELECT
-          s.ShopCode AS shop_code,
-          s.UserID AS user_id,
-          s.ShopName AS shop_name,
-          s.Address AS address,
-          s.IsApproved AS is_approved,
-          s.CreateAt AS created_at,
-          s.UpdateAt AS updated_at,
-          s.ApprovedAt AS approved_at,
-          COALESCE(sb.AccountNumber, '') AS bank_account_number,
-          COALESCE(sb.BankName, '') AS bank_name,
-          COALESCE(sw.Balance, 0) AS wallet_balance,
-          (SELECT COUNT(*) FROM Fields WHERE ShopCode = s.ShopCode) AS field_count,
-          (SELECT COUNT(*) FROM Bookings b JOIN Fields f ON b.FieldCode = f.FieldCode WHERE f.ShopCode = s.ShopCode) AS booking_count
-        FROM Shops s
-        LEFT JOIN Shop_Bank_Accounts sb
-          ON sb.ShopCode = s.ShopCode
-         AND (sb.IsDefault = 'Y' OR sb.IsDefault IS NULL)
-        LEFT JOIN Shop_Wallets sw ON sw.ShopCode = s.ShopCode
-        WHERE s.UserID = ?
-        ORDER BY s.ShopCode ASC
-        LIMIT 1
-      `,
-      [userId]
-    );
+    const rows = await queryService.execQueryList(SHOP_QUERIES.GET_BY_USER_ID, [
+      userId,
+    ]);
 
     return rows[0] || null;
   },
@@ -64,28 +41,9 @@ const shopModel = {
   async getByCode(shopCode: number) {
     if (!Number.isFinite(shopCode)) return null;
 
-    const rows = await queryService.execQueryList(
-      `
-        SELECT
-          s.ShopCode AS shop_code,
-          s.UserID AS user_id,
-          s.ShopName AS shop_name,
-          s.Address AS address,
-          s.IsApproved AS is_approved,
-          s.CreateAt AS created_at,
-          s.UpdateAt AS updated_at,
-          s.ApprovedAt AS approved_at,
-          COALESCE(sb.AccountNumber, '') AS bank_account_number,
-          COALESCE(sb.BankName, '') AS bank_name
-        FROM Shops s
-        LEFT JOIN Shop_Bank_Accounts sb
-          ON sb.ShopCode = s.ShopCode
-         AND (sb.IsDefault = 'Y' OR sb.IsDefault IS NULL)
-        WHERE s.ShopCode = ?
-        LIMIT 1
-      `,
-      [shopCode]
-    );
+    const rows = await queryService.execQueryList(SHOP_QUERIES.GET_BY_CODE, [
+      shopCode,
+    ]);
 
     return rows[0] || null;
   },
@@ -95,16 +53,31 @@ const shopModel = {
    */
   async getShopCodeByUserId(userId: number): Promise<number | null> {
     const [shopRows] = await queryService.query<RowDataPacket[]>(
-      `SELECT ShopCode FROM Shops WHERE UserID = ? LIMIT 1`,
+      SHOP_QUERIES.GET_SHOP_CODE_BY_USER_ID,
       [userId]
     );
 
     return shopRows?.[0] ? Number((shopRows[0] as any).ShopCode ?? 0) : null;
   },
 
-  /**
-   * Create new shop
-   */
+  async getShopSummaryByCode(
+    shopCode: number
+  ): Promise<{ ShopCode: number; UserID: number } | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      SHOP_QUERIES.GET_SHOP_SUMMARY_BY_CODE,
+      [shopCode]
+    );
+    return (rows?.[0] as { ShopCode: number; UserID: number }) || null;
+  },
+
+  async listBankAccounts(shopCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      SHOP_QUERIES.LIST_BANK_ACCOUNTS_BY_SHOP,
+      [shopCode]
+    );
+    return rows || [];
+  },
+
   async createShop(
     connection: PoolConnection,
     userId: number,
@@ -112,10 +85,7 @@ const shopModel = {
     address: string
   ): Promise<number> {
     const [insertRes] = await connection.query<ResultSetHeader>(
-      `
-        INSERT INTO Shops (UserID, ShopName, Address, IsApproved, CreateAt, UpdateAt)
-        VALUES (?, ?, ?, 'Y', NOW(), NOW())
-      `,
+      SHOP_QUERIES.CREATE_SHOP,
       [userId, shopName.trim(), address.trim()]
     );
 
@@ -131,14 +101,11 @@ const shopModel = {
     shopName: string,
     address: string
   ): Promise<void> {
-    await connection.query(
-      `
-        UPDATE Shops
-        SET ShopName = ?, Address = ?, UpdateAt = NOW()
-        WHERE ShopCode = ?
-      `,
-      [shopName.trim(), address.trim(), shopCode]
-    );
+    await connection.query(SHOP_QUERIES.UPDATE_SHOP, [
+      shopName.trim(),
+      address.trim(),
+      shopCode,
+    ]);
   },
 
   /**
@@ -148,14 +115,9 @@ const shopModel = {
     connection: PoolConnection,
     shopCode: number
   ): Promise<void> {
-    await connection.query(
-      `
-        UPDATE Shop_Bank_Accounts
-        SET IsDefault = 'N'
-        WHERE ShopCode = ?
-      `,
-      [shopCode]
-    );
+    await connection.query(SHOP_QUERIES.CLEAR_DEFAULT_BANK_ACCOUNTS, [
+      shopCode,
+    ]);
   },
 
   /**
@@ -170,14 +132,18 @@ const shopModel = {
     isDefault: string = "Y"
   ): Promise<number> {
     const [insertRes] = await connection.query<ResultSetHeader>(
-      `
-        INSERT INTO Shop_Bank_Accounts (ShopCode, AccountNumber, BankName, AccountHolder, IsDefault)
-        VALUES (?, ?, ?, ?, ?)
-      `,
+      SHOP_QUERIES.CREATE_BANK_ACCOUNT,
       [shopCode, accountNumber, bankName, accountHolder, isDefault]
     );
 
     return Number((insertRes as any)?.insertId ?? 0);
+  },
+
+  async withTransaction<T>(
+    label: string,
+    handler: (connection: PoolConnection) => Promise<T>
+  ): Promise<T> {
+    return queryService.execTransaction(label, handler);
   },
 };
 

@@ -1,6 +1,5 @@
-import queryService from "./query";
 import shopUtilitiesModel from "../models/shopUtilities.model";
-import { SHOP_UTILITY_IDS, getUtilityLabel } from "../constants/utilities";
+import { SHOP_UTILITY_IDS } from "../constants/utilities";
 
 export type ShopUtilityRow = {
   utility_id: string;
@@ -26,9 +25,12 @@ export async function replaceShopUtilities(
     )
   );
 
-  await queryService.execTransaction("shopUtilities.replace", async (conn) => {
-    await shopUtilitiesModel.replaceForShop(conn, shopCode, uniqueIds);
-  });
+  await shopUtilitiesModel.withTransaction(
+    "shopUtilities.replace",
+    async (conn) => {
+      await shopUtilitiesModel.replaceForShop(conn, shopCode, uniqueIds);
+    }
+  );
 
   return listShopUtilities(shopCode);
 }

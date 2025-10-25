@@ -1,5 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
-import queryService from "../services/query";
+import queryService from "../core/database";
+import { PRICING_QUERIES } from "../queries/pricing.queries";
+import { PRICING_QUERIES } from "../queries/pricing.queries";
 
 // ============ TYPES ============
 export type OperatingHoursRow = {
@@ -20,12 +22,12 @@ const pricingModel = {
    * Get default price from field
    */
   async getDefaultPrice(fieldCode: number): Promise<number> {
-    const fieldDetails = await queryService.execQueryOne(
-      `SELECT DefaultPricePerHour FROM Fields WHERE FieldCode = ?`,
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      PRICING_QUERIES.GET_DEFAULT_PRICE,
       [fieldCode]
     );
-
-    return (fieldDetails as any)?.DefaultPricePerHour || 50000;
+    const record = rows?.[0] as RowDataPacket | undefined;
+    return Number(record?.DefaultPricePerHour ?? 50000);
   },
 
   /**
@@ -38,23 +40,10 @@ const pricingModel = {
     endTime: string,
     pricePerHour: number
   ): Promise<number> {
-    const query = `
-      INSERT INTO Field_Pricing (
-        FieldCode,
-        DayOfWeek,
-        StartTime,
-        EndTime,
-        PricePerHour
-      ) VALUES (?, ?, ?, ?, ?)
-    `;
-
-    const result = await queryService.execQuery(query, [
-      fieldCode,
-      dayOfWeek,
-      startTime,
-      endTime,
-      pricePerHour,
-    ]);
+    const result = await queryService.execQuery(
+      PRICING_QUERIES.CREATE_OPERATING_HOURS,
+      [fieldCode, dayOfWeek, startTime, endTime, pricePerHour]
+    );
 
     if (typeof result === "boolean") {
       throw new Error("Cannot create operating hours");
@@ -70,21 +59,10 @@ const pricingModel = {
     pricingId: number,
     userId: number
   ): Promise<OperatingHoursRow | null> {
-    const query = `
-      SELECT
-        p.PricingID AS pricing_id,
-        p.FieldCode AS field_code,
-        p.DayOfWeek AS day_of_week,
-        DATE_FORMAT(p.StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(p.EndTime, '%H:%i') AS end_time
-      FROM Field_Pricing p
-      JOIN Fields f ON f.FieldCode = p.FieldCode
-      JOIN Shops s ON s.ShopCode = f.ShopCode
-      WHERE p.PricingID = ? AND s.UserID = ?
-      LIMIT 1
-    `;
-
-    const rows = await queryService.execQueryList(query, [pricingId, userId]);
+    const rows = await queryService.execQueryList(
+      PRICING_QUERIES.GET_OPERATING_HOURS_BY_ID,
+      [pricingId, userId]
+    );
     return (rows[0] as OperatingHoursRow) || null;
   },
 
@@ -117,11 +95,10 @@ const pricingModel = {
 
     params.push(pricingId);
 
-    const query = `
-      UPDATE Field_Pricing
-      SET ${fields.join(", ")}
-      WHERE PricingID = ?
-    `;
+    const query = PRICING_QUERIES.UPDATE_OPERATING_HOURS_BASE.replace(
+      "{{FIELDS}}",
+      fields.join(", ")
+    );
 
     const result = await queryService.execQuery(query, params);
     if (typeof result === "boolean") {
@@ -135,8 +112,10 @@ const pricingModel = {
    * Delete operating hours
    */
   async deleteOperatingHours(pricingId: number): Promise<boolean> {
-    const query = `DELETE FROM Field_Pricing WHERE PricingID = ?`;
-    const result = await queryService.execQuery(query, [pricingId]);
+    const result = await queryService.execQuery(
+      PRICING_QUERIES.DELETE_OPERATING_HOURS,
+      [pricingId]
+    );
 
     if (typeof result === "boolean") {
       return result;
@@ -155,18 +134,14 @@ const pricingModel = {
     endTime: string,
     excludePricingId?: number
   ): Promise<number> {
-    let query = `
-      SELECT COUNT(*) AS count
-      FROM Field_Pricing
-      WHERE FieldCode = ? 
-        AND DayOfWeek = ?
-        AND NOT (EndTime <= ? OR StartTime >= ?)
-    `;
-
     const params: any[] = [fieldCode, dayOfWeek, startTime, endTime];
 
+    const query = PRICING_QUERIES.CHECK_TIME_OVERLAP.replace(
+      "{{EXCLUDE}}",
+      excludePricingId ? " AND PricingID != ?" : ""
+    );
+
     if (excludePricingId) {
-      query += " AND PricingID != ?";
       params.push(excludePricingId);
     }
 
@@ -178,19 +153,10 @@ const pricingModel = {
    * Get pricing record by ID (for retrieval)
    */
   async getPricingById(pricingId: number) {
-    const query = `
-      SELECT
-        p.PricingID AS pricing_id,
-        p.FieldCode AS field_code,
-        p.DayOfWeek AS day_of_week,
-        DATE_FORMAT(p.StartTime, '%H:%i') AS start_time,
-        DATE_FORMAT(p.EndTime, '%H:%i') AS end_time
-      FROM Field_Pricing p
-      WHERE p.PricingID = ?
-      LIMIT 1
-    `;
-
-    const rows = await queryService.execQueryList(query, [pricingId]);
+    const rows = await queryService.execQueryList(
+      PRICING_QUERIES.GET_PRICING_BY_ID,
+      [pricingId]
+    );
     return (rows[0] as OperatingHoursRow) || null;
   },
 };

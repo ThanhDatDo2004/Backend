@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
-import { ApiError } from "http-errors";
+import ApiError from "../utils/apiErrors";
 import fieldQuantityService from "../services/fieldQuantity.service";
-import fieldModel from "../models/field.model";
-import shopService from "../services/shop.service";
 import apiResponse from "../core/respone";
 
 const fieldQuantityController = {
@@ -29,16 +27,6 @@ const fieldQuantityController = {
         );
       }
 
-      // Validate field exists
-
-      const field = await fieldModel.findById(Number(fieldCode));
-      if (!field) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân loại")
-        );
-      }
-
-      // Get availability
       const availability = await fieldQuantityService.getAvailableSlot(
         Number(fieldCode),
         String(playDate),
@@ -64,13 +52,6 @@ const fieldQuantityController = {
   async getQuantities(req: Request, res: Response, next: NextFunction) {
     try {
       const { fieldCode } = req.params;
-
-      const field = await fieldModel.findById(Number(fieldCode));
-      if (!field) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân loại")
-        );
-      }
 
       const quantities = await fieldQuantityService.getQuantitiesForField(
         Number(fieldCode)
@@ -123,42 +104,11 @@ const fieldQuantityController = {
 
       // Validate ownership
 
-      const field = await fieldModel.findById(Number(fieldCode));
-      if (!field) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân loại")
-        );
-      }
-
-      const shop = await shopService.getByShopCode(field.shop_code);
-      if (!shop || shop.user_id !== userId) {
-        return next(
-          new ApiError(
-            StatusCodes.FORBIDDEN,
-            "Bạn không có quyền cập nhật sân này"
-          )
-        );
-      }
-
-      // Find quantity by fieldCode and quantityNumber
-      const quantities = await fieldQuantityService.getQuantitiesForField(
-        Number(fieldCode)
-      );
-      const quantity = quantities.find(
-        (q) => q.quantity_number === Number(quantityNumber)
-      );
-
-      if (!quantity) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
-        );
-      }
-
-      // Update status
-
-      const updated = await fieldQuantityService.updateQuantityStatus(
-        quantity.quantity_id,
-        status
+      const updated = await fieldQuantityService.updateQuantityStatusByNumber(
+        Number(fieldCode),
+        Number(quantityNumber),
+        status,
+        userId
       );
 
       return apiResponse.success(

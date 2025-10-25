@@ -1,6 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
-import queryService from "../services/query";
+import queryService from "../core/database";
 
 // ============ TYPES ============
 export type ShopRequestPayload = {
