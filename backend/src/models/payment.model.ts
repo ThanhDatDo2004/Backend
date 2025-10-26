@@ -2,13 +2,29 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import queryService from "../services/query";
 
 // ============ TYPES ============
+// Thêm type PaymentDbRow = RowDataPacket, chỉnh Promise<PaymentRow | null> thành Promise<PaymentDbRow | null>
+
 export type PaymentRow = {
-  PaymentID: number;
-  BookingCode: string;
+  PaymentID?: number;
+  BookingCode?: string;
   AdminBankID?: number;
-  PaymentMethod: string;
-  Amount: number;
-  PaymentStatus: "pending" | "paid" | "failed" | "refunded";
+  PaymentMethod?: string;
+  Amount?: number;
+  PaymentStatus?: "pending" | "paid" | "failed" | "refunded";
+  MomoTransactionID?: string | null;
+  MomoOrderId?: string | null;
+  MomoRequestID?: string | null;
+  CreateAt?: string | Date;
+  UpdateAt?: string | Date;
+  PaidAt?: string | Date | null;
+};
+type PaymentDbRow = RowDataPacket & {
+  PaymentID?: number;
+  BookingCode?: string;
+  AdminBankID?: number;
+  PaymentMethod?: string;
+  Amount?: number;
+  PaymentStatus?: "pending" | "paid" | "failed" | "refunded";
   MomoTransactionID?: string | null;
   MomoOrderId?: string | null;
   MomoRequestID?: string | null;
@@ -53,7 +69,7 @@ const paymentModel = {
   /**
    * Get payment by ID
    */
-  async getById(paymentID: number): Promise<PaymentRow | null> {
+  async getById(paymentID: number): Promise<PaymentDbRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
       `SELECT * FROM Payments_Admin WHERE PaymentID = ?`,
       [paymentID]
@@ -67,7 +83,7 @@ const paymentModel = {
    */
   async getByMomoTransactionID(
     momoTransactionID: string
-  ): Promise<PaymentRow | null> {
+  ): Promise<PaymentDbRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
       `SELECT * FROM Payments_Admin WHERE MomoTransactionID = ?`,
       [momoTransactionID]
@@ -79,7 +95,7 @@ const paymentModel = {
   /**
    * Get payment by MomoOrderId
    */
-  async getByMomoOrderId(momoOrderId: string): Promise<PaymentRow | null> {
+  async getByMomoOrderId(momoOrderId: string): Promise<PaymentDbRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
       `SELECT * FROM Payments_Admin WHERE MomoOrderId = ?`,
       [momoOrderId]
@@ -93,7 +109,7 @@ const paymentModel = {
    */
   async getByBookingCode(
     bookingCode: string | number
-  ): Promise<PaymentRow | null> {
+  ): Promise<PaymentDbRow | null> {
     const [rows] = await queryService.query<RowDataPacket[]>(
       `SELECT * FROM Payments_Admin WHERE BookingCode = ? ORDER BY UpdateAt DESC, PaymentID DESC LIMIT 1`,
       [bookingCode]

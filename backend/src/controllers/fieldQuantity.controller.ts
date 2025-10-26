@@ -130,7 +130,7 @@ const fieldQuantityController = {
         );
       }
 
-      const shop = await shopService.getByShopCode(field.shop_code);
+      const shop = await shopService.getByCode(field.shop_code);
       if (!shop || shop.user_id !== userId) {
         return next(
           new ApiError(
