@@ -63,8 +63,8 @@ import fieldQuantityRouter from "./routes/fieldQuantity.routes";
 import shopRouter from "./routes/shop.routes";
 import adminRouter from "./routes/admin.routes";
 import paymentRouter from "./routes/payment.routes";
-import notificationRouter from "./routes/notification.routes";
 import bookingRouter from "./routes/booking.routes";
+import cartRouter from "./routes/cart.routes";
 import { cleanupExpiredHeldSlots } from "./services/booking.service";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,9 +76,9 @@ app.use("/api/fields", fieldRouter);
 app.use("/api/fields", fieldQuantityRouter);
 app.use("/api/shops", shopRouter);
 app.use("/api/bookings", bookingRouter);
+app.use("/api/cart", cartRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/payments", paymentRouter);
-app.use("/api/notifications", notificationRouter);
 app.use(
   "/uploads",
   express.static(uploadsDir, {

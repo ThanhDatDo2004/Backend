@@ -4,6 +4,7 @@ import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import queryService from "../services/query";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
+import cartService from "../services/cart.service";
 
 const bookingController = {
   /**
@@ -544,23 +545,46 @@ const bookingController = {
         );
       }
 
-      // Kiểm tra thời gian (chỉ hủy được trước 2 giờ)
-      const playDate = new Date(booking.PlayDate);
-      const [startTimeStr] = booking.StartTime.toString().split(".");
-      const [hours, minutes] = startTimeStr.split(":").map(Number);
-      playDate.setHours(hours, minutes, 0, 0);
-
-      const now = new Date();
-      const diffMs = playDate.getTime() - now.getTime();
-      const diffHours = diffMs / (1000 * 60 * 60);
-
-      if (diffHours < 2 && booking.BookingStatus !== "pending") {
-        return next(
-          new ApiError(
-            StatusCodes.BAD_REQUEST,
-            "Chỉ có thể hủy booking trước 2 giờ"
-          )
+      // Kiểm tra thời gian (chỉ hủy được trước 2 giờ đối với booking đã confirm)
+      if (booking.BookingStatus !== "pending") {
+        const [slotRows] = await queryService.query<RowDataPacket[]>(
+          `SELECT PlayDate, StartTime 
+             FROM Booking_Slots 
+            WHERE BookingCode = ? 
+            ORDER BY PlayDate ASC, StartTime ASC 
+            LIMIT 1`,
+          [bookingCode]
         );
+
+        const firstSlot = slotRows?.[0];
+        if (firstSlot?.PlayDate && firstSlot?.StartTime) {
+          const startTimeRaw = String(firstSlot.StartTime);
+          const [startHours, startMinutes] = startTimeRaw
+            .split(":")
+            .map((value: string) => Number(value));
+
+          const playDateTime = new Date(firstSlot.PlayDate);
+          if (!Number.isNaN(playDateTime.getTime())) {
+            playDateTime.setHours(
+              Number.isFinite(startHours) ? startHours : 0,
+              Number.isFinite(startMinutes) ? startMinutes : 0,
+              0,
+              0
+            );
+
+            const diffMs = playDateTime.getTime() - Date.now();
+            const diffHours = diffMs / (1000 * 60 * 60);
+
+            if (diffHours < 2) {
+              return next(
+                new ApiError(
+                  StatusCodes.BAD_REQUEST,
+                  "Chỉ có thể hủy booking trước 2 giờ"
+                )
+              );
+            }
+          }
+        }
       }
 
       // Cập nhật booking status
@@ -590,6 +614,11 @@ const bookingController = {
          WHERE BookingCode = ?`,
         [bookingCode]
       );
+
+      const numericBookingCode = Number(bookingCode);
+      if (Number.isFinite(numericBookingCode) && numericBookingCode > 0) {
+        await cartService.removeEntriesForBookings([numericBookingCode]);
+      }
 
       // Nếu đã thanh toán, tạo refund
       if (booking.PaymentStatus === "paid") {
@@ -696,6 +725,15 @@ const bookingController = {
          WHERE BookingCode = ?`,
         [status, bookingCode]
       );
+
+      const numericBookingCode = Number(bookingCode);
+      if (
+        status !== "pending" &&
+        Number.isFinite(numericBookingCode) &&
+        numericBookingCode > 0
+      ) {
+        await cartService.removeEntriesForBookings([numericBookingCode]);
+      }
 
       if (status === "completed") {
         // Update CompletedAt
@@ -1109,6 +1147,11 @@ const bookingController = {
          WHERE BookingCode = ?`,
         [bookingCode]
       );
+
+      const numericBookingCode = Number(bookingCode);
+      if (Number.isFinite(numericBookingCode) && numericBookingCode > 0) {
+        await cartService.removeEntriesForBookings([numericBookingCode]);
+      }
 
       // ✅ DECREMENT RENT if it was confirmed
       if (wasConfirmed) {

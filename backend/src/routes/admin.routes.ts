@@ -3,7 +3,6 @@ import adminController from "../controllers/admin.controller";
 import paymentController from "../controllers/payment.controller";
 import payoutController from "../controllers/payout.controller";
 import walletController from "../controllers/wallet.controller";
-import reviewController from "../controllers/review.controller";
 import bookingController from "../controllers/booking.controller";
 
 const router = express.Router();
@@ -30,8 +29,5 @@ router.patch("/payout-requests/:payoutID/reject", payoutController.adminRejectPa
 
 // Booking status management
 router.patch("/bookings/:bookingCode/status", bookingController.updateBookingStatus);
-
-// Review moderation
-router.delete("/reviews/:reviewCode", reviewController.adminDeleteReview);
 
 export default router;

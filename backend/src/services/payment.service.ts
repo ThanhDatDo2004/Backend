@@ -2,6 +2,7 @@ import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import paymentModel from "../models/payment.model";
 import { sendBookingConfirmationEmail } from "./mail.service";
+import cartService from "./cart.service";
 
 const PLATFORM_FEE_PERCENT = 5; // 5% admin fee
 const SHOP_EARNING_PERCENT = 95; // 95% shop earning
@@ -116,6 +117,14 @@ export async function handlePaymentSuccess(paymentID: number) {
 
   // Cập nhật booking status
   await paymentModel.confirmBooking(payment.BookingCode, paymentID);
+
+  const bookingCodeNumeric = Number(payment.BookingCode);
+  if (
+    Number.isFinite(bookingCodeNumeric) &&
+    bookingCodeNumeric > 0
+  ) {
+    await cartService.removeEntriesForBookings([bookingCodeNumeric]);
+  }
 
   // Update Booking_Slots - change status from 'pending' to 'booked'
   await paymentModel.updateBookingSlotsToBooked(payment.BookingCode);

@@ -370,6 +370,11 @@ const fieldController = {
         );
       }
 
+      const isLoggedInCustomer =
+        Number.isFinite(authUserId) &&
+        authUserId > 0 &&
+        authUserId !== DEFAULT_GUEST_CUSTOMER_USER_ID;
+
       // NEW: Extract quantityId and convert to number if provided
       const rawQuantityInput =
         quantity_id !== undefined && quantity_id !== null
@@ -403,6 +408,7 @@ const fieldController = {
             typeof promotionCodeInput === "string"
               ? promotionCodeInput.toUpperCase()
               : undefined,
+          isLoggedInCustomer,
         },
         quantityId // NEW: Pass quantityId
       );

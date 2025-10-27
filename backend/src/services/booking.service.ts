@@ -8,6 +8,7 @@ import shopPromotionService, {
 } from "./shopPromotion.service";
 import bookingModel from "../models/booking.model";
 import paymentModel from "../models/payment.model";
+import cartService from "./cart.service";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
@@ -32,6 +33,7 @@ export type ConfirmBookingPayload = {
   created_by?: number | null;
   promotion_code?: string;
   promotionCode?: string;
+  isLoggedInCustomer?: boolean;
 };
 
 type NormalizedSlot = {
@@ -64,6 +66,7 @@ export type ConfirmBookingResult = {
   discount_amount: number;
   promotion_code?: string | null;
   promotion_title?: string | null;
+  hold_expires_at: string;
   slots: Array<{
     slot_id: number;
     play_date: string;
@@ -323,6 +326,7 @@ async function cancelExpiredBookings(expiredSlots: ExpiredSlot[]) {
   if (!bookingCodes.length) return;
 
   await bookingModel.cancelExpiredBookings(bookingCodes);
+  await cartService.removeEntriesForBookings(bookingCodes);
 }
 
 export async function releaseExpiredHeldSlots(fieldCode: number) {
@@ -520,7 +524,10 @@ export async function confirmFieldBooking(
 
   let bookingCode: number = 0;
 
-  const result = await queryService.execTransaction(
+  const transactionResult = await queryService.execTransaction<{
+    slots: ConfirmBookingResult["slots"];
+    holdExpiresAt: Date;
+  }>(
     "confirmFieldBooking",
     async (connection) => {
       // 1. Xử lý slots (lock, update, insert)
@@ -761,7 +768,21 @@ export async function confirmFieldBooking(
         }
       }
 
-      return updatedSlots;
+      const shouldPersistCart =
+        Boolean(payload.isLoggedInCustomer) &&
+        Number.isFinite(userID) &&
+        userID > 0;
+
+      if (shouldPersistCart) {
+        await cartService.persistEntry(
+          connection,
+          userID,
+          bookingCode,
+          holdExpiryTime
+        );
+      }
+
+      return { slots: updatedSlots, holdExpiresAt: holdExpiryTime };
     }
   );
 
@@ -813,7 +834,8 @@ export async function confirmFieldBooking(
     discount_amount: discountAmount,
     promotion_code: appliedPromotion?.promotion_code ?? null,
     promotion_title: appliedPromotion?.title ?? null,
-    slots: result,
+    hold_expires_at: transactionResult.holdExpiresAt.toISOString(),
+    slots: transactionResult.slots,
   };
 }
 

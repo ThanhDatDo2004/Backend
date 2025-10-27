@@ -1,7 +1,6 @@
 import express from "express";
 import fieldController from "../controllers/field.controller";
 import bookingController from "../controllers/booking.controller";
-import reviewController from "../controllers/review.controller";
 import { optionalAuth, requireAuth } from "../middlewares/auth.middleware";
 import { fieldImagesUpload } from "../middlewares/upload.middleware";
 
@@ -54,16 +53,6 @@ router.get(
   "/:bookingCode/checkin-code",
   requireAuth,
   bookingController.getCheckinCode
-);
-
-// Review endpoints
-router.get("/:fieldCode/reviews", reviewController.listFieldReviews);
-router.post("/:fieldCode/reviews", requireAuth, reviewController.createReview);
-router.put("/reviews/:reviewCode", requireAuth, reviewController.updateReview);
-router.delete(
-  "/reviews/:reviewCode",
-  requireAuth,
-  reviewController.deleteReview
 );
 
 export default router;

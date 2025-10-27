@@ -1075,9 +1075,6 @@ const fieldService = {
         bank_name: "",
         isapproved: row.shop_is_approved === "Y" ? 1 : 0,
       },
-      // Reviews đã loại bỏ khỏi hệ thống
-      reviews: [],
-      averageRating: Number(row.average_rating ?? 0),
       quantities: quantitiesByField.get(row.field_code) ?? [],
     }));
   },
