@@ -2,7 +2,7 @@ import payoutModel from "../models/payout.model";
 import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import authService from "./auth";
-import { sendVerificationEmail, sendMail } from "./mail.service";
+import { sendMail, sendPayoutDecisionEmail } from "./mail.service";
 
 /**
  * Tạo yêu cầu rút tiền
@@ -177,6 +177,29 @@ export async function approvePayoutRequest(payoutID: number, note?: string) {
   // (Wallet đã bị trừ ngay khi tạo request)
   await payoutModel.completeWalletTransaction(payoutID);
 
+  const updatedPayout = await payoutModel.getPayoutByID(payoutID);
+
+  if (updatedPayout?.owner_email) {
+    try {
+      await sendPayoutDecisionEmail({
+        to: updatedPayout.owner_email,
+        fullName: updatedPayout.owner_full_name,
+        shopName: updatedPayout.ShopName ?? `Shop #${payout.ShopCode}`,
+        amount: Number(updatedPayout.Amount ?? payout.Amount ?? 0),
+        status: "approved",
+        note,
+        processedAt: updatedPayout.ProcessedAt ?? new Date(),
+        bankName: updatedPayout.BankName,
+        bankAccountNumber: updatedPayout.AccountNumber,
+      });
+    } catch (error) {
+      console.error(
+        "[payoutService] Failed to send payout approval email:",
+        error
+      );
+    }
+  }
+
   return {
     success: true,
     payoutID,
@@ -201,14 +224,45 @@ export async function rejectPayoutRequest(payoutID: number, reason: string) {
     );
   }
 
+  const normalizedReason = (reason ?? "").toString().trim();
+
   // Cập nhật payout status
-  await payoutModel.rejectPayoutRequest(payoutID, reason);
+  await payoutModel.rejectPayoutRequest(
+    payoutID,
+    normalizedReason,
+    Number(payout.ShopCode),
+    Math.max(0, Number(payout.Amount ?? 0))
+  );
+
+  const updatedPayout = await payoutModel.getPayoutByID(payoutID);
+
+  if (updatedPayout?.owner_email) {
+    try {
+      await sendPayoutDecisionEmail({
+        to: updatedPayout.owner_email,
+        fullName: updatedPayout.owner_full_name,
+        shopName: updatedPayout.ShopName ?? `Shop #${payout.ShopCode}`,
+        amount: Number(updatedPayout.Amount ?? payout.Amount ?? 0),
+        status: "rejected",
+        reason: normalizedReason,
+        processedAt: updatedPayout.ProcessedAt ?? new Date(),
+        bankName: updatedPayout.BankName,
+        bankAccountNumber: updatedPayout.AccountNumber,
+      });
+    } catch (error) {
+      console.error(
+        "[payoutService] Failed to send payout rejection email:",
+        error
+      );
+    }
+  }
 
   return {
     success: true,
     payoutID,
     status: "rejected",
-    rejectionReason: reason,
+    rejectionReason: normalizedReason,
+    refundedAmount: Number(payout.Amount ?? 0),
   };
 }
 

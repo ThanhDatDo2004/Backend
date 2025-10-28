@@ -163,9 +163,17 @@ const payoutModel = {
    */
   async getPayoutByID(payoutID: number) {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT pr.*, s.ShopName, sba.BankName, sba.AccountNumber, sba.AccountHolder, sba.IsDefault
+      `SELECT pr.*,
+              s.ShopName,
+              sba.BankName,
+              sba.AccountNumber,
+              sba.AccountHolder,
+              sba.IsDefault,
+              u.Email AS owner_email,
+              u.FullName AS owner_full_name
        FROM Payout_Requests pr
        JOIN Shops s ON pr.ShopCode = s.ShopCode
+       JOIN Users u ON s.UserID = u.UserID
        JOIN Shop_Bank_Accounts sba ON pr.ShopBankID = sba.ShopBankID
        WHERE pr.PayoutID = ?`,
       [payoutID]
@@ -297,15 +305,69 @@ const payoutModel = {
   /**
    * Reject payout request
    */
-  async rejectPayoutRequest(payoutID: number, reason: string): Promise<void> {
-    await queryService.execQuery(
-      `UPDATE Payout_Requests
-       SET Status = 'rejected',
-           RejectionReason = ?,
-           ProcessedAt = NOW(),
-           UpdateAt = NOW()
-       WHERE PayoutID = ?`,
-      [reason, payoutID]
+  async rejectPayoutRequest(
+    payoutID: number,
+    reason: string,
+    shopCode: number,
+    amount: number
+  ): Promise<void> {
+    const normalizedReason = reason?.trim() ?? "";
+    const refundNoteBase = `Hoàn tiền do từ chối yêu cầu rút #${payoutID}`;
+    const refundNote = normalizedReason
+      ? `${refundNoteBase}: ${normalizedReason}`.slice(0, 250)
+      : refundNoteBase;
+
+    await queryService.execTransaction(
+      "payout_reject_with_refund",
+      async (connection) => {
+        await connection.query<ResultSetHeader>(
+          `UPDATE Payout_Requests
+           SET Status = 'rejected',
+               RejectionReason = ?,
+               ProcessedAt = NOW(),
+               UpdateAt = NOW()
+           WHERE PayoutID = ?`,
+          [normalizedReason || null, payoutID]
+        );
+
+        await connection.query<ResultSetHeader>(
+          `UPDATE Shop_Wallets
+             SET Balance = Balance + ?,
+                 UpdateAt = NOW()
+           WHERE ShopCode = ?`,
+          [amount, shopCode]
+        );
+
+        await connection.query<ResultSetHeader>(
+          `UPDATE Wallet_Transactions
+             SET Status = 'failed',
+                 Note = CASE
+                          WHEN ? = '' THEN Note
+                          WHEN Note IS NULL OR Note = '' THEN ?
+                          ELSE CONCAT(Note, ' | Lý do từ chối: ', ?)
+                        END
+           WHERE PayoutID = ? AND Type = 'debit_payout'`,
+          [
+            normalizedReason,
+            normalizedReason,
+            normalizedReason,
+            payoutID,
+          ]
+        );
+
+        await connection.query<ResultSetHeader>(
+          `INSERT INTO Wallet_Transactions (
+             ShopCode,
+             Type,
+             Amount,
+             Note,
+             Status,
+             PayoutID,
+             CreateAt
+           ) VALUES (?, 'adjustment', ?, ?, 'completed', ?, NOW())`,
+          [shopCode, amount, refundNote, payoutID]
+        );
+      }
     );
   },
 

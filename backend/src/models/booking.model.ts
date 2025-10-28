@@ -26,6 +26,33 @@ export type NormalizedSlot = {
   db_end_time: string;
 };
 
+export type CustomerBookingRow = RowDataPacket & {
+  BookingCode: number;
+  FieldCode: number;
+  CustomerUserID: number;
+  CreateAt: string;
+  TotalPrice: number;
+  BookingStatus: string;
+  PaymentStatus: string;
+  FieldName: string;
+  SportType: string;
+  ShopName: string;
+  CustomerPhone: string | null;
+  CheckinCode: string | null;
+};
+
+export type BookingSlotWithQuantityRow = RowDataPacket & {
+  BookingCode: number;
+  Slot_ID: number;
+  QuantityID: number | null;
+  QuantityNumber: number | null;
+  PlayDate: string;
+  StartTime: string;
+  EndTime: string;
+  PricePerSlot: number;
+  Status: string;
+};
+
 // ============ BOOKING MODEL ============
 const bookingModel = {
   /**
@@ -399,6 +426,228 @@ const bookingModel = {
     );
 
     return Number(rows?.[0]?.TotalUsage ?? 0);
+  },
+
+  async listCustomerBookings(
+    userId: number,
+    options: {
+      status?: string;
+      sortField?: string;
+      sortOrder?: "ASC" | "DESC";
+      limit: number;
+      offset: number;
+    }
+  ): Promise<CustomerBookingRow[]> {
+    const allowedSort = new Set([
+      "CreateAt",
+      "PlayDate",
+      "TotalPrice",
+      "BookingStatus",
+    ]);
+    const sortColumn = allowedSort.has(options.sortField || "")
+      ? options.sortField
+      : "CreateAt";
+    const sortOrder = options.sortOrder === "ASC" ? "ASC" : "DESC";
+
+    let query = `
+      SELECT 
+        b.*, 
+        f.FieldName,
+        f.SportType,
+        s.ShopName
+      FROM Bookings b
+      JOIN Fields f ON b.FieldCode = f.FieldCode
+      JOIN Shops s ON f.ShopCode = s.ShopCode
+      WHERE b.CustomerUserID = ?
+    `;
+
+    const params: any[] = [userId];
+
+    if (options.status) {
+      query += " AND b.BookingStatus = ?";
+      params.push(options.status);
+    }
+
+    query += ` ORDER BY ${sortColumn} ${sortOrder} LIMIT ? OFFSET ?`;
+    params.push(options.limit, options.offset);
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return rows as CustomerBookingRow[];
+  },
+
+  async countCustomerBookings(userId: number, status?: string): Promise<number> {
+    let query = `SELECT COUNT(*) AS total FROM Bookings WHERE CustomerUserID = ?`;
+    const params: any[] = [userId];
+    if (status) {
+      query += ` AND BookingStatus = ?`;
+      params.push(status);
+    }
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return Number(rows?.[0]?.total ?? 0);
+  },
+
+  async listSlotsWithQuantity(
+    bookingCodes: number[]
+  ): Promise<BookingSlotWithQuantityRow[]> {
+    if (!bookingCodes.length) return [];
+
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT 
+         bs.BookingCode,
+         bs.Slot_ID,
+         bs.QuantityID,
+         fq.QuantityNumber,
+         DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') AS PlayDate,
+         DATE_FORMAT(bs.StartTime, '%H:%i') AS StartTime,
+         DATE_FORMAT(bs.EndTime, '%H:%i') AS EndTime,
+         bs.PricePerSlot,
+         bs.Status
+       FROM Booking_Slots bs
+       LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
+       WHERE bs.BookingCode IN (?)
+       ORDER BY bs.PlayDate, bs.StartTime`,
+      [bookingCodes]
+    );
+
+    return rows as BookingSlotWithQuantityRow[];
+  },
+
+  async getBookingDetail(
+    bookingCode: number,
+    userId?: number
+  ): Promise<RowDataPacket | null> {
+    let query = `
+      SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
+             CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END AS paid_amount
+      FROM Bookings b
+      JOIN Fields f ON b.FieldCode = f.FieldCode
+      JOIN Shops s ON f.ShopCode = s.ShopCode
+      LEFT JOIN Payments_Admin p ON b.PaymentID = p.PaymentID
+      WHERE b.BookingCode = ?
+    `;
+    const params: any[] = [bookingCode];
+    if (Number.isFinite(userId) && userId) {
+      query += " AND b.CustomerUserID = ?";
+      params.push(userId);
+    }
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return rows?.[0] || null;
+  },
+
+  async getBookingByCustomer(
+    bookingCode: number,
+    userId: number
+  ): Promise<RowDataPacket | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT * FROM Bookings WHERE BookingCode = ? AND CustomerUserID = ?`,
+      [bookingCode, userId]
+    );
+
+    return rows?.[0] || null;
+  },
+
+  async getEarliestSlot(bookingCode: number): Promise<RowDataPacket | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT PlayDate, StartTime 
+         FROM Booking_Slots 
+        WHERE BookingCode = ?
+        ORDER BY PlayDate ASC, StartTime ASC
+        LIMIT 1`,
+      [bookingCode]
+    );
+
+    return rows?.[0] || null;
+  },
+
+  async setBookingStatus(
+    bookingCode: number,
+    status: string
+  ): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Bookings 
+         SET BookingStatus = ?, UpdateAt = NOW()
+       WHERE BookingCode = ?`,
+      [status, bookingCode]
+    );
+  },
+
+  async setBookingCompletedAt(bookingCode: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Bookings SET CompletedAt = NOW(), UpdateAt = NOW() WHERE BookingCode = ?`,
+      [bookingCode]
+    );
+  },
+
+  async setBookingSlotsStatus(
+    bookingCode: number,
+    status: string
+  ): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Booking_Slots
+         SET Status = ?, UpdateAt = NOW()
+       WHERE BookingCode = ?`,
+      [status, bookingCode]
+    );
+  },
+
+  async setBookingCheckinTime(bookingCode: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Bookings 
+         SET CheckinTime = NOW(), UpdateAt = NOW()
+       WHERE BookingCode = ?`,
+      [bookingCode]
+    );
+  },
+
+  async resetFieldSlotsToAvailable(bookingCode: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Field_Slots 
+         SET Status = 'available',
+             BookingCode = NULL,
+             HoldExpiresAt = NULL,
+             UpdateAt = NOW()
+       WHERE BookingCode = ?`,
+      [bookingCode]
+    );
+  },
+
+  async decrementFieldRent(fieldCode: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Fields
+         SET Rent = GREATEST(Rent - 1, 0),
+             UpdateAt = NOW()
+       WHERE FieldCode = ?`,
+      [fieldCode]
+    );
+  },
+
+  async insertBookingRefund(
+    bookingCode: number,
+    amount: number,
+    reason: string
+  ): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `INSERT INTO Booking_Refunds (
+         BookingCode,
+         RefundAmount,
+         Reason,
+         Status,
+         RequestedAt,
+         CreateAt
+       ) VALUES (?, ?, ?, 'approved', NOW(), NOW())`,
+      [bookingCode, amount, reason]
+    );
+  },
+
+  async getFieldShopCode(fieldCode: number): Promise<number | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT ShopCode FROM Fields WHERE FieldCode = ?`,
+      [fieldCode]
+    );
+
+    return rows?.[0]?.ShopCode ?? null;
   },
 
   /**

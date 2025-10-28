@@ -1,0 +1,20 @@
+src/controllers/fieldQuantity.controller.ts(3,10): error TS2305: Module '"http-errors"' has no exported member 'ApiError'.
+src/models/payment.model.ts(353,5): error TS2741: Property 'AdminBankID' is missing in type 'RowDataPacket' but required in type '{ AdminBankID: number; }'.
+src/models/shopPromotion.model.ts(74,5): error TS2740: Type 'RowDataPacket' is missing the following properties from type 'ShopPromotionRow': PromotionID, ShopCode, PromotionCode, Title, and 12 more.
+src/models/shopPromotion.model.ts(304,5): error TS2740: Type 'RowDataPacket' is missing the following properties from type 'ShopPromotionRow': PromotionID, ShopCode, PromotionCode, Title, and 12 more.
+src/services/fieldQuantity.service.ts(4,10): error TS2305: Module '"http-errors"' has no exported member 'ApiError'.
+src/services/payment.service.ts(119,37): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+src/services/payment.service.ts(130,49): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+src/services/payment.service.ts(133,47): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+src/services/payment.service.ts(137,30): error TS2345: Argument of type 'number | undefined' is not assignable to parameter of type 'number'.
+  Type 'undefined' is not assignable to type 'number'.
+src/services/payment.service.ts(150,5): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string | number'.
+  Type 'undefined' is not assignable to type 'string | number'.
+src/services/query.ts(74,7): error TS2322: Type '[T, FieldPacket[]]' is not assignable to type '[T extends RowDataPacket[] ? RowDataPacket[] : ResultSetHeader, any]'.
+  Type at position 0 in source is not compatible with type at position 0 in target.
+    Type 'T' is not assignable to type 'T extends RowDataPacket[] ? RowDataPacket[] : ResultSetHeader'.
+      Type 'ResultSetHeader | RowDataPacket[]' is not assignable to type 'T extends RowDataPacket[] ? RowDataPacket[] : ResultSetHeader'.
+        Type 'ResultSetHeader' is not assignable to type 'T extends RowDataPacket[] ? RowDataPacket[] : ResultSetHeader'.

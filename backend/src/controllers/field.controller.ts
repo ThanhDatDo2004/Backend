@@ -34,6 +34,33 @@ const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
   return 1;
 })();
 
+const resolveBookingUser = (
+  req: Request,
+  candidate: unknown
+): { userId?: number; isLoggedInCustomer: boolean } => {
+  const authUserId = toNumber((req as any).user?.UserID);
+  if (authUserId && authUserId > 0) {
+    return {
+      userId: authUserId,
+      isLoggedInCustomer: authUserId !== DEFAULT_GUEST_CUSTOMER_USER_ID,
+    };
+  }
+
+  const fallbackUserId = toNumber(candidate);
+  if (fallbackUserId && fallbackUserId > 0) {
+    return { userId: fallbackUserId, isLoggedInCustomer: false };
+  }
+
+  if (DEFAULT_GUEST_CUSTOMER_USER_ID > 0) {
+    return {
+      userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
+      isLoggedInCustomer: false,
+    };
+  }
+
+  return { userId: undefined, isLoggedInCustomer: false };
+};
+
 const fieldController = {
   async list(req: Request, res: Response, next: NextFunction) {
     try {
@@ -334,34 +361,18 @@ const fieldController = {
         );
       }
 
-      const authUserId = Number((req as any).user?.UserID);
       const bodyCreatedBy =
         req.body?.created_by ??
         req.body?.createdBy ??
         req.body?.customerUserID ??
         req.body?.customer_user_id;
-      const parsedBodyUserId =
-        typeof bodyCreatedBy === "number" || typeof bodyCreatedBy === "string"
-          ? Number(bodyCreatedBy)
-          : undefined;
 
-      let resolvedUserId: number | undefined;
-      if (Number.isFinite(authUserId) && authUserId > 0) {
-        resolvedUserId = authUserId;
-      } else if (
-        typeof parsedBodyUserId === "number" &&
-        Number.isFinite(parsedBodyUserId) &&
-        parsedBodyUserId > 0
-      ) {
-        resolvedUserId = parsedBodyUserId;
-      } else if (
-        Number.isFinite(DEFAULT_GUEST_CUSTOMER_USER_ID) &&
-        DEFAULT_GUEST_CUSTOMER_USER_ID > 0
-      ) {
-        resolvedUserId = DEFAULT_GUEST_CUSTOMER_USER_ID;
-      }
+      const { userId: resolvedUserId, isLoggedInCustomer } = resolveBookingUser(
+        req,
+        bodyCreatedBy
+      );
 
-      if (!resolvedUserId || !Number.isFinite(resolvedUserId)) {
+      if (!resolvedUserId) {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
@@ -370,28 +381,13 @@ const fieldController = {
         );
       }
 
-      const isLoggedInCustomer =
-        Number.isFinite(authUserId) &&
-        authUserId > 0 &&
-        authUserId !== DEFAULT_GUEST_CUSTOMER_USER_ID;
+      const quantityId = toNumber(
+        quantity_id ?? quantityIdCamel ?? undefined
+      );
 
-      // NEW: Extract quantityId and convert to number if provided
-      const rawQuantityInput =
-        quantity_id !== undefined && quantity_id !== null
-          ? quantity_id
-          : quantityIdCamel !== undefined && quantityIdCamel !== null
-          ? quantityIdCamel
-          : undefined;
-
-      const quantityId =
-        rawQuantityInput !== undefined ? Number(rawQuantityInput) : undefined;
-
-      const promotionCodeInput =
-        typeof promotionCodeSnake === "string" && promotionCodeSnake.trim()
-          ? promotionCodeSnake.trim()
-          : typeof promotionCodeCamel === "string" && promotionCodeCamel.trim()
-          ? promotionCodeCamel.trim()
-          : undefined;
+      const promotionCodeInput = ([promotionCodeSnake, promotionCodeCamel].find(
+        (code) => typeof code === "string" && code.trim()
+      ) as string | undefined)?.trim();
 
       const result = await bookingService.confirmFieldBooking(
         fieldCode,
@@ -404,10 +400,7 @@ const fieldController = {
             typeof total_price === "number" ? total_price : undefined,
           notes: typeof notes === "string" ? notes : undefined,
           created_by: resolvedUserId,
-          promotion_code:
-            typeof promotionCodeInput === "string"
-              ? promotionCodeInput.toUpperCase()
-              : undefined,
+          promotion_code: promotionCodeInput?.toUpperCase(),
           isLoggedInCustomer,
         },
         quantityId // NEW: Pass quantityId

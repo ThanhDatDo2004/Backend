@@ -5,6 +5,7 @@ import adminModel, {
   ShopRequestRow,
   FinanceBookingRow,
 } from "../models/admin.model";
+import { sendShopRequestStatusEmail } from "./mail.service";
 
 const STATUS_MAP: Record<
   string,
@@ -194,7 +195,29 @@ const adminService = {
       requestId,
       status
     );
-    return updatedRow ? mapShopRequestRow(updatedRow) : null;
+    if (!updatedRow) {
+      return null;
+    }
+
+    const mapped = mapShopRequestRow(updatedRow);
+
+    if (
+      mapped.email &&
+      (status === "approved" || status === "rejected")
+    ) {
+      void sendShopRequestStatusEmail({
+        to: mapped.email,
+        fullName: updatedRow.full_name,
+        status: status === "approved" ? "approved" : "rejected",
+      }).catch((error) => {
+        console.error(
+          "[adminService] Failed to send shop request status email:",
+          error
+        );
+      });
+    }
+
+    return mapped;
   },
 };
 

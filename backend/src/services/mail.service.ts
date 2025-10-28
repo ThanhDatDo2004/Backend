@@ -161,3 +161,148 @@ Yêu cầu mở shop mới:
 
   return info;
 }
+
+type ShopRequestStatus = "approved" | "rejected";
+
+export async function sendShopRequestStatusEmail(options: {
+  to: string;
+  fullName?: string | null;
+  status: ShopRequestStatus;
+}) {
+  const { to, fullName, status } = options;
+  const appName = process.env.APP_NAME || "ThueRe";
+  const greetingName = fullName?.trim() || "bạn";
+
+  const subjectSuffix =
+    status === "approved" ? "được duyệt" : "không được duyệt";
+
+  const defaultMessage =
+    status === "approved"
+      ? "Chúc mừng! Yêu cầu mở shop của bạn đã được duyệt. Bạn có thể đăng nhập và bắt đầu thiết lập gian hàng của mình ngay bây giờ."
+      : "Rất tiếc, yêu cầu mở shop của bạn chưa thể được duyệt vào thời điểm này. Bạn có thể cập nhật lại thông tin và gửi yêu cầu mới khi đã sẵn sàng.";
+
+  const info = await transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to,
+    subject: `[${appName}] Yêu cầu mở shop ${subjectSuffix}`,
+    text: `Xin chào ${greetingName},
+
+${defaultMessage}
+
+Trân trọng,
+${appName}`,
+    html: `
+      <p>Xin chào ${greetingName},</p>
+      <p>${defaultMessage}</p>
+      <p>Trân trọng,<br/>${appName}</p>
+    `,
+  });
+
+  return info;
+}
+
+type PayoutDecisionStatus = "approved" | "rejected";
+
+export async function sendPayoutDecisionEmail(options: {
+  to: string;
+  fullName?: string | null;
+  shopName: string;
+  amount: number;
+  status: PayoutDecisionStatus;
+  reason?: string | null;
+  note?: string | null;
+  processedAt?: Date | string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+}) {
+  const {
+    to,
+    fullName,
+    shopName,
+    amount,
+    status,
+    reason,
+    note,
+    processedAt,
+    bankName,
+    bankAccountNumber,
+  } = options;
+
+  const appName = process.env.APP_NAME || "ThueRe";
+  const greetingName = fullName?.trim() || shopName || "bạn";
+  const formattedAmount = Number(amount || 0).toLocaleString("vi-VN");
+  const processedAtText = processedAt
+    ? new Date(processedAt).toLocaleString("vi-VN")
+    : new Date().toLocaleString("vi-VN");
+
+  const bankInfoHtml =
+    bankName || bankAccountNumber
+      ? `
+        <p><strong>Ngân hàng:</strong> ${bankName || "—"}</p>
+        <p><strong>Số tài khoản:</strong> ${bankAccountNumber || "—"}</p>
+      `
+      : "";
+
+  let subject: string;
+  let bodyText: string;
+  let bodyHtml: string;
+
+  if (status === "approved") {
+    subject = `[${appName}] Yêu cầu rút tiền đã được duyệt`;
+    const noteSection = note ? `Ghi chú từ admin: ${note}` : "";
+    bodyText = `Xin chào ${greetingName},
+
+Yêu cầu rút tiền từ shop ${shopName} với số tiền ${formattedAmount}đ đã được duyệt và ghi nhận vào lúc ${processedAtText}.
+${noteSection}
+
+Trân trọng,
+${appName}`;
+
+    bodyHtml = `
+      <p>Xin chào ${greetingName},</p>
+      <p>Yêu cầu rút tiền từ shop <strong>${shopName}</strong> với số tiền <strong>${formattedAmount}đ</strong> đã được duyệt.</p>
+      <p><strong>Thời gian xử lý:</strong> ${processedAtText}</p>
+      ${bankInfoHtml}
+      ${note ? `<p><strong>Ghi chú:</strong> ${note}</p>` : ""}
+      <p>Trân trọng,<br/>${appName}</p>
+    `;
+  } else {
+    subject = `[${appName}] Yêu cầu rút tiền bị từ chối`;
+    const reasonSection = reason
+      ? `Lý do: ${reason}`
+      : "Yêu cầu bị từ chối. Vui lòng kiểm tra lại thông tin và gửi lại yêu cầu mới.";
+    bodyText = `Xin chào ${greetingName},
+
+Rất tiếc, yêu cầu rút tiền từ shop ${shopName} với số tiền ${formattedAmount}đ đã bị từ chối vào lúc ${processedAtText}.
+${reasonSection}
+
+Số tiền đã được hoàn trả lại ví shop của bạn.
+
+Trân trọng,
+${appName}`;
+
+    bodyHtml = `
+      <p>Xin chào ${greetingName},</p>
+      <p>Rất tiếc, yêu cầu rút tiền từ shop <strong>${shopName}</strong> với số tiền <strong>${formattedAmount}đ</strong> đã bị từ chối.</p>
+      <p><strong>Thời gian xử lý:</strong> ${processedAtText}</p>
+      ${bankInfoHtml}
+      ${
+        reason
+          ? `<p><strong>Lý do:</strong> ${reason}</p>`
+          : "<p>Yêu cầu bị từ chối. Vui lòng kiểm tra lại thông tin và gửi lại yêu cầu mới.</p>"
+      }
+      <p>Số tiền đã được hoàn lại vào ví shop của bạn.</p>
+      <p>Trân trọng,<br/>${appName}</p>
+    `;
+  }
+
+  const info = await transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to,
+    subject,
+    text: bodyText,
+    html: bodyHtml,
+  });
+
+  return info;
+}

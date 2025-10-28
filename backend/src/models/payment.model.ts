@@ -235,6 +235,17 @@ const paymentModel = {
     );
   },
 
+  async debitShopWallet(shopCode: number, amount: number): Promise<void> {
+    await queryService.execQuery(
+      `INSERT INTO Shop_Wallets (ShopCode, Balance, CreateAt, UpdateAt)
+       VALUES (?, GREATEST(0, ?), NOW(), NOW())
+       ON DUPLICATE KEY UPDATE 
+         Balance = GREATEST(0, Balance - ?),
+         UpdateAt = NOW()`,
+      [shopCode, 0, amount]
+    );
+  },
+
   /**
    * Increment field rent count
    */

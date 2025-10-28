@@ -2,9 +2,37 @@ import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
+import {
+  cancelBookingByOwner,
+  cancelCustomerBooking,
+  confirmFieldBooking,
+  getBookingCheckinCode,
+  getCustomerBookingDetail,
+  listCustomerBookings,
+  updateBookingStatus,
+  verifyBookingCheckin,
+} from "../services/booking.service";
+import type { ConfirmBookingPayload } from "../services/booking.service";
 import queryService from "../services/query";
 import { RowDataPacket, ResultSetHeader } from "mysql2";
 import cartService from "../services/cart.service";
+
+const parseBookingCodeParam = (value: string): number | null => {
+  const direct = Number(value);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+
+  const match = String(value).match(/(\d+)/);
+  if (match) {
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
 
 const bookingController = {
   /**
@@ -13,7 +41,10 @@ const bookingController = {
    */
   async listBookings(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
+      const userId = Number((req as any).user?.UserID);
+      if (!Number.isFinite(userId)) {
+        throw new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập");
+      }
       const {
         status,
         limit = 10,
@@ -21,101 +52,17 @@ const bookingController = {
         sort = "CreateAt",
         order = "DESC",
       } = req.query;
-
-      let query = `SELECT b.*, f.FieldName, f.SportType, s.ShopName
-                   FROM Bookings b
-                   JOIN Fields f ON b.FieldCode = f.FieldCode
-                   JOIN Shops s ON f.ShopCode = s.ShopCode
-                   WHERE b.CustomerUserID = ?`;
-      const params: any[] = [userId];
-
-      if (status) {
-        query += ` AND b.BookingStatus = ?`;
-        params.push(status);
-      }
-
-      // Validate sort field
-      const validSortFields = [
-        "CreateAt",
-        "PlayDate",
-        "TotalPrice",
-        "BookingStatus",
-      ];
-      const sortField = validSortFields.includes(sort as string)
-        ? sort
-        : "CreateAt";
-      const sortOrder = order === "ASC" ? "ASC" : "DESC";
-
-      query += ` ORDER BY ${sortField} ${sortOrder} LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
-      );
-
-      // Handle null values for CustomerPhone and CheckinCode
-      const enrichedBookings = bookings.map((booking: any) => ({
-        ...booking,
-        CustomerPhone: booking.CustomerPhone || "Chưa cập nhật",
-        CheckinCode: booking.CheckinCode || "-",
-      }));
-
-      // Fetch all slots for each booking from BOOKING_SLOTS
-      const bookingsWithSlots = await Promise.all(
-        enrichedBookings.map(async (booking: any) => {
-          const [slots] = await queryService.query<RowDataPacket[]>(
-            `SELECT 
-               bs.Slot_ID,
-               bs.QuantityID,
-               fq.QuantityNumber,
-               DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
-               DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
-               DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime,
-               bs.PricePerSlot,
-               bs.Status 
-             FROM Booking_Slots bs
-             LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
-             WHERE bs.BookingCode = ?
-             ORDER BY bs.PlayDate, bs.StartTime`,
-            [booking.BookingCode]
-          );
-
-          const quantityInfo = (slots || []).find(
-            (slot: RowDataPacket) => slot.QuantityNumber != null
-          );
-
-          return {
-            ...booking,
-            slots: slots || [],
-            quantityId: quantityInfo?.QuantityID ?? null,
-            quantityNumber: quantityInfo?.QuantityNumber ?? null,
-          };
-        })
-      );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Bookings WHERE CustomerUserID = ?`;
-      const countParams: any[] = [userId];
-      if (status) {
-        countQuery += ` AND BookingStatus = ?`;
-        countParams.push(status);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
-      );
+      const result = await listCustomerBookings(userId, {
+        status: typeof status === "string" ? status : undefined,
+        limit: Number(limit) || 10,
+        offset: Number(offset) || 0,
+        sort: typeof sort === "string" ? sort : undefined,
+        order: typeof order === "string" ? order : undefined,
+      });
 
       return apiResponse.success(
         res,
-        {
-          data: bookingsWithSlots,
-          pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
-          },
-        },
+        result,
         "Danh sách booking",
         StatusCodes.OK
       );
@@ -135,7 +82,7 @@ const bookingController = {
    */
   async createBooking(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
+      const userId = Number((req as any).user?.UserID);
       const {
         fieldCode,
         quantityID,
@@ -156,249 +103,65 @@ const bookingController = {
           )
         );
       }
+      if (!Number.isFinite(userId)) {
+        throw new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập");
+      }
 
-      // ✅ NEW: Convert quantity_id or quantityID to number
+      const numericFieldCode = Number(fieldCode);
+      if (!Number.isFinite(numericFieldCode) || numericFieldCode <= 0) {
+        return next(
+          new ApiError(StatusCodes.BAD_REQUEST, "fieldCode không hợp lệ")
+        );
+      }
+
       const finalQuantityID =
-        quantity_id !== undefined && quantity_id !== null
-          ? Number(quantity_id)
-          : quantityID !== undefined && quantityID !== null
-          ? Number(quantityID)
+        quantity_id ?? quantityID ?? null;
+      const numericQuantityId =
+        finalQuantityID !== null && finalQuantityID !== undefined
+          ? Number(finalQuantityID)
           : null;
 
-      // Kiểm tra field tồn tại
-      const [fields] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Fields WHERE FieldCode = ?`,
-        [fieldCode]
-      );
+      const payload: ConfirmBookingPayload = {
+        slots: [
+          {
+            play_date: playDate,
+            start_time: startTime,
+            end_time: endTime,
+          },
+        ],
+        payment_method: "bank_transfer",
+        customer: {
+          name: customerName,
+          email: customerEmail,
+          phone: customerPhone,
+        },
+        created_by: userId,
+        isLoggedInCustomer: true,
+      };
 
-      if (!fields?.[0]) {
-        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
+      if (Number.isFinite(numericQuantityId)) {
+        payload.quantity_id = Number(numericQuantityId);
       }
 
-      const field = fields[0];
-
-      // ✅ NEW: If quantityID provided, validate it's available
-      if (finalQuantityID) {
-        // Check if quantity exists and belongs to this field
-        const [quantities] = await queryService.query<RowDataPacket[]>(
-          `SELECT * FROM Field_Quantity WHERE QuantityID = ? AND FieldCode = ?`,
-          [finalQuantityID, fieldCode]
-        );
-
-        if (!quantities?.[0]) {
-          return next(
-            new ApiError(
-              StatusCodes.NOT_FOUND,
-              "Sân không tồn tại hoặc không thuộc sân loại này"
-            )
-          );
-        }
-
-        const quantity = quantities[0];
-
-        // Check if quantity status is available
-        if (quantity.Status !== "available") {
-          return next(
-            new ApiError(
-              StatusCodes.CONFLICT,
-              `Sân ${quantity.QuantityNumber} không khả dụng (${quantity.Status})`
-            )
-          );
-        }
-
-        // Check if this specific quantity is already booked for this time slot
-        const [bookedQuantities] = await queryService.query<RowDataPacket[]>(
-          `SELECT COUNT(*) as cnt FROM Bookings b
-           JOIN Field_Slots fs ON b.BookingCode = fs.BookingCode
-           WHERE b.QuantityID = ? AND fs.PlayDate = ? AND fs.StartTime = ? AND fs.EndTime = ? 
-           AND b.BookingStatus IN ('pending', 'confirmed')`,
-          [finalQuantityID, playDate, startTime, endTime]
-        );
-
-        if (bookedQuantities?.[0]?.cnt > 0) {
-          return next(
-            new ApiError(
-              StatusCodes.CONFLICT,
-              "Sân này đã được đặt trong khung giờ này"
-            )
-          );
-        }
-      }
-
-      // Check available slots
-      let slotQuery = `
-        SELECT *
-        FROM Field_Slots 
-        WHERE FieldCode = ?
-          AND PlayDate = ?
-          AND StartTime = ?
-          AND EndTime = ?
-      `;
-      const slotParams: any[] = [fieldCode, playDate, startTime, endTime];
-      if (finalQuantityID !== null) {
-        slotQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
-        slotParams.push(finalQuantityID);
-      }
-      slotQuery += ` AND Status = 'available'`;
-
-      const [slots] = await queryService.query<RowDataPacket[]>(
-        slotQuery,
-        slotParams
+      const confirmation = await confirmFieldBooking(
+        numericFieldCode,
+        payload,
+        Number.isFinite(numericQuantityId) ? Number(numericQuantityId) : null
       );
 
-      if (!slots?.[0]) {
-        // Nếu không có slot available, tạo slot mới
-        try {
-          await queryService.query<ResultSetHeader>(
-            `INSERT INTO Field_Slots (
-              FieldCode,
-              QuantityID,
-              PlayDate,
-              StartTime,
-              EndTime,
-              Status,
-              CreateAt,
-              UpdateAt
-            ) VALUES (?, ?, ?, ?, ?, 'available', NOW(), NOW())`,
-            [fieldCode, finalQuantityID, playDate, startTime, endTime]
-          );
-        } catch (err: any) {
-          // Nếu duplicate key (slot đã tồn tại), update status về available
-          if (err.code === "ER_DUP_ENTRY") {
-            let updateQuery = `
-              UPDATE Field_Slots 
-              SET Status = 'available',
-                  QuantityID = IFNULL(?, QuantityID),
-                  UpdateAt = NOW()
-              WHERE FieldCode = ?
-                AND PlayDate = ?
-                AND StartTime = ?
-                AND EndTime = ?
-            `;
-            const updateParams: any[] = [
-              finalQuantityID ?? null,
-              fieldCode,
-              playDate,
-              startTime,
-              endTime,
-            ];
-            if (finalQuantityID !== null) {
-              updateQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
-              updateParams.push(finalQuantityID);
-            }
-            await queryService.query<ResultSetHeader>(
-              updateQuery,
-              updateParams
-            );
-          } else {
-            throw err;
-          }
-        }
-      }
-
-      // Calculate total price
-      const pricePerSlot = field.DefaultPricePerHour || 100000;
-      const totalPrice = pricePerSlot;
-
-      // Calculate platform fee (5%)
-      const platformFee = Math.round(totalPrice * 0.05);
-      const netToShop = totalPrice - platformFee;
-
-      // ✅ FIXED: Include finalQuantityID in Bookings INSERT
-      // Create booking with customer info
-      const [bookingResult] = await queryService.query<ResultSetHeader>(
-        `INSERT INTO Bookings (
-          FieldCode,
-          QuantityID,
-          CustomerUserID,
-          CustomerName,
-          CustomerEmail,
-          CustomerPhone,
-          TotalPrice,
-          PlatformFee,
-          NetToShop,
-          BookingStatus,
-          PaymentStatus,
-          CreateAt,
-          UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
-        [
-          fieldCode,
-          finalQuantityID,
-          userId,
-          customerName || null,
-          customerEmail || null,
-          customerPhone || null,
-          totalPrice,
-          platformFee,
-          netToShop,
-        ]
+      const detail = await getCustomerBookingDetail(
+        Number(confirmation.booking_code)
       );
 
-      const bookingCode = (bookingResult as any).insertId;
-
-      // Lưu chi tiết slot đã đặt vào Booking_Slots (bao gồm QuantityID)
-      await queryService.query<ResultSetHeader>(
-        `INSERT INTO Booking_Slots (
-          BookingCode,
-          FieldCode,
-          QuantityID,
-          PlayDate,
-          StartTime,
-          EndTime,
-          PricePerSlot,
-          Status,
-          CreateAt,
-          UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'booked', NOW(), NOW())`,
-        [
-          bookingCode,
-          fieldCode,
-          finalQuantityID,
-          playDate,
-          startTime,
-          endTime,
-          pricePerSlot,
-        ]
-      );
-
-      // Update slot status
-      let updateSlotQuery = `
-        UPDATE Field_Slots 
-        SET Status = 'booked',
-            BookingCode = ?,
-            QuantityID = IFNULL(?, QuantityID),
-            UpdateAt = NOW()
-        WHERE FieldCode = ?
-          AND PlayDate = ?
-          AND StartTime = ?
-          AND EndTime = ?
-          AND Status = 'available'
-      `;
-      const updateSlotParams: any[] = [
-        bookingCode,
-        finalQuantityID ?? null,
-        fieldCode,
-        playDate,
-        startTime,
-        endTime,
-      ];
-      if (finalQuantityID !== null) {
-        updateSlotQuery += ` AND (QuantityID = ? OR QuantityID IS NULL)`;
-        updateSlotParams.push(finalQuantityID);
-      }
-
-      await queryService.query<ResultSetHeader>(
-        updateSlotQuery,
-        updateSlotParams
-      );
+      const fieldName = (detail as any)?.FieldName ?? "";
 
       return apiResponse.success(
         res,
         {
-          bookingCode,
-          totalPrice,
-          fieldName: field.FieldName,
+          bookingCode: confirmation.booking_code,
+          totalPrice:
+            confirmation.amount ?? confirmation.amount_before_discount ?? 0,
+          fieldName,
         },
         "Tạo booking thành công",
         StatusCodes.CREATED
@@ -419,79 +182,33 @@ const bookingController = {
    */
   async getBooking(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
+      const userId = Number((req as any).user?.UserID);
       const { bookingCode } = req.params;
 
-      // Normalize booking code for INT column
-      let searchBookingCode: number;
-      const bookingCodeNum = Number(bookingCode);
-      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
-        searchBookingCode = bookingCodeNum;
-      } else {
-        const match = String(bookingCode).match(/(\d+)/);
-        if (match) {
-          searchBookingCode = Number(match[1]);
-        } else {
-          return next(
-            new ApiError(
-              StatusCodes.BAD_REQUEST,
-              "BookingCode format không hợp lệ"
-            )
-          );
-        }
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
+        );
       }
 
-      // Nếu có userId, chỉ lấy booking của user đó; nếu không thì lấy bất kỳ booking nào
-      let query = `SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
-                CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END as paid_amount
-         FROM Bookings b
-         JOIN Fields f ON b.FieldCode = f.FieldCode
-         JOIN Shops s ON f.ShopCode = s.ShopCode
-         LEFT JOIN Payments_Admin p ON b.PaymentID = p.PaymentID
-         WHERE b.BookingCode = ?`;
-
-      const params: any[] = [searchBookingCode];
-
-      if (userId) {
-        query += ` AND b.CustomerUserID = ?`;
-        params.push(userId);
-      }
-
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
+      const detail = await getCustomerBookingDetail(
+        normalizedCode,
+        Number.isFinite(userId) ? userId : undefined
       );
 
-      if (!bookings?.[0]) {
+      if (!detail) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
       }
 
-      // Get all slots for this booking from BOOKING_SLOTS table
-      const [slots] = await queryService.query<RowDataPacket[]>(
-        `SELECT 
-           bs.Slot_ID,
-           bs.QuantityID,
-           fq.QuantityNumber,
-           DATE_FORMAT(bs.PlayDate, '%Y-%m-%d') as PlayDate,
-           DATE_FORMAT(bs.StartTime, '%H:%i') as StartTime,
-           DATE_FORMAT(bs.EndTime, '%H:%i') as EndTime,
-           bs.PricePerSlot,
-           bs.Status
-         FROM Booking_Slots bs
-         LEFT JOIN Field_Quantity fq ON bs.QuantityID = fq.QuantityID
-         WHERE bs.BookingCode = ?
-         ORDER BY bs.PlayDate, bs.StartTime`,
-        [searchBookingCode]
-      );
-
       return apiResponse.success(
         res,
-        {
-          ...bookings[0],
-          slots: slots || [],
-        },
+        detail,
         "Chi tiết booking",
         StatusCodes.OK
       );
@@ -511,153 +228,32 @@ const bookingController = {
    */
   async cancelBooking(req: Request, res: Response, next: NextFunction) {
     try {
-      const userId = (req as any).user?.UserID;
+      const userId = Number((req as any).user?.UserID);
       const { bookingCode } = req.params;
       const { reason } = req.body;
-
-      // Lấy booking
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Bookings WHERE BookingCode = ? AND CustomerUserID = ?`,
-        [bookingCode, userId]
-      );
-
-      if (!bookings?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
-        );
+      if (!Number.isFinite(userId)) {
+        throw new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập");
       }
 
-      const booking = bookings[0];
-
-      // Kiểm tra trạng thái
-      if (booking.BookingStatus === "completed") {
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
-            "Không thể hủy booking đã hoàn thành"
+            "BookingCode format không hợp lệ"
           )
         );
       }
 
-      if (booking.BookingStatus === "cancelled") {
-        return next(
-          new ApiError(StatusCodes.BAD_REQUEST, "Booking đã bị hủy rồi")
-        );
-      }
-
-      // Kiểm tra thời gian (chỉ hủy được trước 2 giờ đối với booking đã confirm)
-      if (booking.BookingStatus !== "pending") {
-        const [slotRows] = await queryService.query<RowDataPacket[]>(
-          `SELECT PlayDate, StartTime 
-             FROM Booking_Slots 
-            WHERE BookingCode = ? 
-            ORDER BY PlayDate ASC, StartTime ASC 
-            LIMIT 1`,
-          [bookingCode]
-        );
-
-        const firstSlot = slotRows?.[0];
-        if (firstSlot?.PlayDate && firstSlot?.StartTime) {
-          const startTimeRaw = String(firstSlot.StartTime);
-          const [startHours, startMinutes] = startTimeRaw
-            .split(":")
-            .map((value: string) => Number(value));
-
-          const playDateTime = new Date(firstSlot.PlayDate);
-          if (!Number.isNaN(playDateTime.getTime())) {
-            playDateTime.setHours(
-              Number.isFinite(startHours) ? startHours : 0,
-              Number.isFinite(startMinutes) ? startMinutes : 0,
-              0,
-              0
-            );
-
-            const diffMs = playDateTime.getTime() - Date.now();
-            const diffHours = diffMs / (1000 * 60 * 60);
-
-            if (diffHours < 2) {
-              return next(
-                new ApiError(
-                  StatusCodes.BAD_REQUEST,
-                  "Chỉ có thể hủy booking trước 2 giờ"
-                )
-              );
-            }
-          }
-        }
-      }
-
-      // Cập nhật booking status
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Bookings 
-         SET BookingStatus = 'cancelled',
-             UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [bookingCode]
+      const result = await cancelCustomerBooking(
+        normalizedCode,
+        userId,
+        typeof reason === "string" ? reason : undefined
       );
-
-      // Rollback Booking_Slots
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Booking_Slots 
-         SET Status = 'cancelled',
-             UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      // Rollback Field_Slots
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Field_Slots 
-         SET Status = 'available',
-             BookingCode = NULL,
-             UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      const numericBookingCode = Number(bookingCode);
-      if (Number.isFinite(numericBookingCode) && numericBookingCode > 0) {
-        await cartService.removeEntriesForBookings([numericBookingCode]);
-      }
-
-      // Nếu đã thanh toán, tạo refund
-      if (booking.PaymentStatus === "paid") {
-        const [refundResult] = await queryService.query<ResultSetHeader>(
-          `INSERT INTO Booking_Refunds (
-            BookingCode,
-            RefundAmount,
-            Reason,
-            Status,
-            RequestedAt,
-            CreateAt
-          ) VALUES (?, ?, ?, 'approved', NOW(), NOW())`,
-          [
-            bookingCode,
-            booking.TotalPrice,
-            reason || "Customer requested cancellation",
-          ]
-        );
-
-        // Trừ tiền từ wallet của shop
-        const [fieldRows] = await queryService.query<RowDataPacket[]>(
-          `SELECT ShopCode FROM Fields WHERE FieldCode = ?`,
-          [booking.FieldCode]
-        );
-
-        if (fieldRows?.[0]) {
-          await queryService.query<ResultSetHeader>(
-            `UPDATE Shop_Wallets 
-             SET Balance = GREATEST(0, Balance - ?),
-                 UpdateAt = NOW()
-             WHERE ShopCode = ?`,
-            [booking.NetToShop, fieldRows[0].ShopCode]
-          );
-        }
-      }
 
       return apiResponse.success(
         res,
-        { bookingCode, status: "cancelled" },
+        result,
         "Hủy booking thành công",
         StatusCodes.OK
       );
@@ -678,7 +274,7 @@ const bookingController = {
   async updateBookingStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
-      const { status, note } = req.body;
+      const { status } = req.body;
 
       if (
         !["pending", "confirmed", "completed", "cancelled"].includes(status)
@@ -688,64 +284,21 @@ const bookingController = {
         );
       }
 
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Bookings WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      if (!bookings?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
-        );
-      }
-
-      const booking = bookings[0];
-
-      // Validate status flow
-      const validTransitions: { [key: string]: string[] } = {
-        pending: ["confirmed", "cancelled"],
-        confirmed: ["completed", "cancelled"],
-        completed: [],
-        cancelled: [],
-      };
-
-      if (!validTransitions[booking.BookingStatus]?.includes(status)) {
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
-            `Không thể chuyển từ ${booking.BookingStatus} sang ${status}`
+            "BookingCode format không hợp lệ"
           )
         );
       }
 
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Bookings 
-         SET BookingStatus = ?,
-             UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [status, bookingCode]
-      );
-
-      const numericBookingCode = Number(bookingCode);
-      if (
-        status !== "pending" &&
-        Number.isFinite(numericBookingCode) &&
-        numericBookingCode > 0
-      ) {
-        await cartService.removeEntriesForBookings([numericBookingCode]);
-      }
-
-      if (status === "completed") {
-        // Update CompletedAt
-        await queryService.query<ResultSetHeader>(
-          `UPDATE Bookings SET CompletedAt = NOW() WHERE BookingCode = ?`,
-          [bookingCode]
-        );
-      }
+      const result = await updateBookingStatus(normalizedCode, status);
 
       return apiResponse.success(
         res,
-        { bookingCode, status },
+        result,
         "Cập nhật trạng thái booking thành công",
         StatusCodes.OK
       );
@@ -774,43 +327,21 @@ const bookingController = {
         );
       }
 
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Bookings WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      if (!bookings?.[0]) {
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
         return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
         );
       }
 
-      const booking = bookings[0];
-
-      if (booking.CheckinCode !== checkin_code) {
-        return next(
-          new ApiError(StatusCodes.BAD_REQUEST, "Mã check-in không đúng")
-        );
-      }
-
-      if (booking.CheckinTime) {
-        return next(
-          new ApiError(StatusCodes.BAD_REQUEST, "Booking đã check-in")
-        );
-      }
-
-      // Update checkin info
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Bookings 
-         SET CheckinTime = NOW(),
-             UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [bookingCode]
-      );
+      const result = await verifyBookingCheckin(normalizedCode, checkin_code);
 
       return apiResponse.success(
         res,
-        { bookingCode, checkinTime: new Date() },
+        result,
         "Check-in thành công",
         StatusCodes.OK
       );
@@ -832,32 +363,21 @@ const bookingController = {
     try {
       const { bookingCode } = req.params;
 
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT CheckinCode, BookingStatus FROM Bookings 
-         WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      if (!bookings?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
-        );
-      }
-
-      const booking = bookings[0];
-
-      if (booking.BookingStatus !== "confirmed") {
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
-            "Chỉ booking confirmed mới có mã check-in"
+            "BookingCode format không hợp lệ"
           )
         );
       }
 
+      const result = await getBookingCheckinCode(normalizedCode);
+
       return apiResponse.success(
         res,
-        { bookingCode, checkinCode: booking.CheckinCode },
+        result,
         "Mã check-in",
         StatusCodes.OK
       );
@@ -1125,51 +645,21 @@ const bookingController = {
     try {
       const { bookingCode } = req.params;
 
-      // Get booking to check current status
-      const [bookings] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Bookings WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      if (!bookings?.[0]) {
+      const normalizedCode = parseBookingCodeParam(bookingCode);
+      if (!normalizedCode) {
         return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Booking không tồn tại")
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
         );
       }
 
-      const booking = bookings[0];
-      const wasConfirmed = booking.BookingStatus === "confirmed";
-
-      // Update booking status to cancelled
-      await queryService.query(
-        `UPDATE Bookings
-         SET BookingStatus = 'cancelled', UpdateAt = NOW()
-         WHERE BookingCode = ?`,
-        [bookingCode]
-      );
-
-      const numericBookingCode = Number(bookingCode);
-      if (Number.isFinite(numericBookingCode) && numericBookingCode > 0) {
-        await cartService.removeEntriesForBookings([numericBookingCode]);
-      }
-
-      // ✅ DECREMENT RENT if it was confirmed
-      if (wasConfirmed) {
-        await queryService.query(
-          `UPDATE Fields
-           SET Rent = GREATEST(Rent - 1, 0)
-           WHERE FieldCode = ?`,
-          [booking.FieldCode]
-        );
-
-        console.log(
-          `[BOOKING] Booking ${bookingCode} cancelled - Field ${booking.FieldCode} rent decreased`
-        );
-      }
+      const result = await cancelBookingByOwner(normalizedCode);
 
       return apiResponse.success(
         res,
-        { BookingCode: bookingCode, FieldCode: booking.FieldCode },
+        result,
         "Booking hủy thành công",
         StatusCodes.OK
       );

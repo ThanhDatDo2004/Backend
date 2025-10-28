@@ -6,12 +6,16 @@ import queryService from "./query";
 import shopPromotionService, {
   type ShopPromotion,
 } from "./shopPromotion.service";
-import bookingModel from "../models/booking.model";
+import bookingModel, {
+  type BookingSlotWithQuantityRow,
+  type CustomerBookingRow,
+} from "../models/booking.model";
 import paymentModel from "../models/payment.model";
 import cartService from "./cart.service";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
+const HOLD_DURATION_MS = 15 * 60 * 1000;
 
 export type BookingSlotInput = {
   slot_id?: number | null;
@@ -31,6 +35,7 @@ export type ConfirmBookingPayload = {
   };
   notes?: string;
   created_by?: number | null;
+  quantity_id?: number;
   promotion_code?: string;
   promotionCode?: string;
   isLoggedInCustomer?: boolean;
@@ -76,6 +81,14 @@ export type ConfirmBookingResult = {
   }>;
 };
 
+export type CustomerBookingListOptions = {
+  status?: string;
+  limit: number;
+  offset: number;
+  sort?: string;
+  order?: "ASC" | "DESC" | string;
+};
+
 const normalizeTime = (value: string) => {
   const trimmed = String(value ?? "").trim();
   const match = trimmed.match(TIME_REGEX);
@@ -88,6 +101,8 @@ const normalizeDate = (value: string) => {
   if (!DATE_REGEX.test(trimmed)) return null;
   return trimmed;
 };
+
+const createHoldExpiryDeadline = () => new Date(Date.now() + HOLD_DURATION_MS);
 
 function normalizeSlots(slots: BookingSlotInput[]): NormalizedSlot[] {
   if (!Array.isArray(slots) || !slots.length) {
@@ -581,8 +596,8 @@ export async function confirmFieldBooking(
       }
 
       // 2. Tạo booking thực vào DB - CHỈ lưu thông tin chung (không lưu time)
-      const userID = Number(payload.created_by);
-      if (!Number.isFinite(userID) || userID <= 0) {
+      const bookingUserId = Number(payload.created_by);
+      if (!Number.isFinite(bookingUserId) || bookingUserId <= 0) {
         throw new ApiError(
           StatusCodes.BAD_REQUEST,
           "Người tạo booking không hợp lệ."
@@ -613,7 +628,7 @@ export async function confirmFieldBooking(
         [
           fieldCode,
           quantityId ?? null,
-          userID,
+          bookingUserId,
           payload.customer?.name || null,
           payload.customer?.email || null,
           payload.customer?.phone || null,
@@ -630,7 +645,7 @@ export async function confirmFieldBooking(
       bookingCode = (bookingResult as any).insertId;
 
       // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
-      const holdExpiryTime = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes from now
+      const holdExpiryTime = createHoldExpiryDeadline();
       for (let index = 0; index < normalizedSlots.length; index += 1) {
         const slot = normalizedSlots[index];
         // Insert vào Booking_Slots
@@ -769,14 +784,14 @@ export async function confirmFieldBooking(
       }
 
       const shouldPersistCart =
-        Boolean(payload.isLoggedInCustomer) &&
-        Number.isFinite(userID) &&
-        userID > 0;
+        payload.isLoggedInCustomer === true &&
+        Number.isFinite(bookingUserId) &&
+        bookingUserId > 0;
 
       if (shouldPersistCart) {
         await cartService.persistEntry(
           connection,
-          userID,
+          bookingUserId,
           bookingCode,
           holdExpiryTime
         );
@@ -810,7 +825,7 @@ export async function confirmFieldBooking(
     paymentMethod
   );
 
-  const paymentID = payment.PaymentID;
+  const paymentID = Number(payment.PaymentID);
 
   // Build SePay QR URL
   const sepayAcc = process.env.SEPAY_ACC || "96247THUERE";
@@ -836,6 +851,280 @@ export async function confirmFieldBooking(
     promotion_title: appliedPromotion?.title ?? null,
     hold_expires_at: transactionResult.holdExpiresAt.toISOString(),
     slots: transactionResult.slots,
+  };
+}
+
+export async function listCustomerBookings(
+  userId: number,
+  options: CustomerBookingListOptions
+) {
+  const limit = Math.max(1, Number(options.limit) || 10);
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const sortField = typeof options.sort === "string" ? options.sort : undefined;
+  const sortOrder = options.order === "ASC" ? "ASC" : "DESC";
+
+  const rows = await bookingModel.listCustomerBookings(userId, {
+    status: options.status,
+    sortField,
+    sortOrder,
+    limit,
+    offset,
+  });
+
+  const bookingCodes = rows
+    .map((row) => Number(row.BookingCode))
+    .filter((code) => Number.isFinite(code) && code > 0);
+
+  const slotRows = bookingCodes.length
+    ? await bookingModel.listSlotsWithQuantity(bookingCodes)
+    : [];
+
+  const slotMap = new Map<number, BookingSlotWithQuantityRow[]>();
+  slotRows.forEach((slot) => {
+    const code = Number(slot.BookingCode);
+    if (!slotMap.has(code)) {
+      slotMap.set(code, [slot]);
+    } else {
+      slotMap.get(code)!.push(slot);
+    }
+  });
+
+  const data = rows.map((booking) => {
+    const code = Number(booking.BookingCode);
+    const slots = slotMap.get(code) ?? [];
+    const quantityInfo = slots.find((slot) => slot.QuantityNumber != null);
+
+    return {
+      ...booking,
+      CustomerPhone: booking.CustomerPhone || "Chưa cập nhật",
+      CheckinCode: booking.CheckinCode || "-",
+      slots: slots.map((slot) => ({
+        Slot_ID: slot.Slot_ID,
+        QuantityID: slot.QuantityID,
+        QuantityNumber: slot.QuantityNumber,
+        PlayDate: slot.PlayDate,
+        StartTime: slot.StartTime,
+        EndTime: slot.EndTime,
+        PricePerSlot: slot.PricePerSlot,
+        Status: slot.Status,
+      })),
+      quantityId: quantityInfo?.QuantityID ?? null,
+      quantityNumber: quantityInfo?.QuantityNumber ?? null,
+    };
+  });
+
+  const total = await bookingModel.countCustomerBookings(userId, options.status);
+
+  return {
+    data,
+    pagination: {
+      limit,
+      offset,
+      total,
+    },
+  };
+}
+
+export async function getCustomerBookingDetail(
+  bookingCode: number,
+  userId?: number
+) {
+  const detail = await bookingModel.getBookingDetail(bookingCode, userId);
+  if (!detail) {
+    return null;
+  }
+
+  const slots = await bookingModel.listSlotsWithQuantity([bookingCode]);
+
+  return {
+    ...detail,
+    slots: slots.map((slot) => ({
+      Slot_ID: slot.Slot_ID,
+      QuantityID: slot.QuantityID,
+      QuantityNumber: slot.QuantityNumber,
+      PlayDate: slot.PlayDate,
+      StartTime: slot.StartTime,
+      EndTime: slot.EndTime,
+      PricePerSlot: slot.PricePerSlot,
+      Status: slot.Status,
+    })),
+  };
+}
+
+export async function cancelCustomerBooking(
+  bookingCode: number,
+  userId: number,
+  reason?: string
+) {
+  const booking = await bookingModel.getBookingByCustomer(bookingCode, userId);
+  if (!booking) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
+  }
+
+  if (booking.BookingStatus === "completed") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Không thể hủy booking đã hoàn thành"
+    );
+  }
+
+  if (booking.BookingStatus !== "pending") {
+    const earliestSlot = await bookingModel.getEarliestSlot(bookingCode);
+    if (earliestSlot?.PlayDate && earliestSlot?.StartTime) {
+      const playDateTime = new Date(earliestSlot.PlayDate);
+      const [hours, minutes] = String(earliestSlot.StartTime)
+        .split(":")
+        .map((value) => Number(value));
+
+      if (!Number.isNaN(playDateTime.getTime())) {
+        playDateTime.setHours(
+          Number.isFinite(hours) ? hours : 0,
+          Number.isFinite(minutes) ? minutes : 0,
+          0,
+          0
+        );
+
+        const diffHours =
+          (playDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
+        if (diffHours < 2) {
+          throw new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Chỉ có thể hủy booking trước 2 giờ"
+          );
+        }
+      }
+    }
+  }
+
+  await bookingModel.setBookingStatus(bookingCode, "cancelled");
+  await bookingModel.setBookingSlotsStatus(bookingCode, "cancelled");
+  await bookingModel.resetFieldSlotsToAvailable(bookingCode);
+
+  await cartService.removeEntriesForBookings([bookingCode]);
+
+  if (booking.PaymentStatus === "paid") {
+    const refundReason =
+      reason || "Customer requested cancellation";
+    await bookingModel.insertBookingRefund(
+      bookingCode,
+      Number(booking.TotalPrice || 0),
+      refundReason
+    );
+
+    const shopCode = await bookingModel.getFieldShopCode(booking.FieldCode);
+    if (shopCode) {
+      await paymentModel.debitShopWallet(
+        Number(shopCode),
+        Number(booking.NetToShop || 0)
+      );
+    }
+  }
+
+  return {
+    bookingCode,
+    status: "cancelled" as const,
+  };
+}
+
+export async function getBookingCheckinCode(bookingCode: number) {
+  const booking = await bookingModel.getByBookingCode(String(bookingCode));
+  if (!booking) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
+  }
+
+  if (booking.BookingStatus !== "confirmed") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Chỉ booking confirmed mới có mã check-in"
+    );
+  }
+
+  return {
+    bookingCode,
+    checkinCode: booking.CheckinCode,
+  };
+}
+
+export async function verifyBookingCheckin(
+  bookingCode: number,
+  checkinCode: string
+) {
+  const booking = await bookingModel.getByBookingCode(String(bookingCode));
+  if (!booking) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
+  }
+
+  if (booking.CheckinCode !== checkinCode) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Mã check-in không đúng");
+  }
+
+  if (booking.CheckinTime) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Booking đã check-in");
+  }
+
+  await bookingModel.setBookingCheckinTime(bookingCode);
+
+  return {
+    bookingCode,
+    checkinTime: new Date(),
+  };
+}
+
+export async function updateBookingStatus(
+  bookingCode: number,
+  status: "pending" | "confirmed" | "completed" | "cancelled"
+) {
+  const detail = await bookingModel.getBookingDetail(bookingCode);
+  if (!detail) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
+  }
+
+  const currentStatus = detail.BookingStatus as string;
+  const allowedTransitions: Record<string, string[]> = {
+    pending: ["confirmed", "cancelled"],
+    confirmed: ["completed", "cancelled"],
+    completed: [],
+    cancelled: [],
+  };
+
+  if (!allowedTransitions[currentStatus]?.includes(status)) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      `Không thể chuyển từ ${currentStatus} sang ${status}`
+    );
+  }
+
+  await bookingModel.setBookingStatus(bookingCode, status);
+
+  if (status === "completed") {
+    await bookingModel.setBookingCompletedAt(bookingCode);
+  }
+
+  if (status !== "pending") {
+    await cartService.removeEntriesForBookings([bookingCode]);
+  }
+
+  return { bookingCode, status };
+}
+
+export async function cancelBookingByOwner(bookingCode: number) {
+  const booking = await bookingModel.getByBookingCode(String(bookingCode));
+  if (!booking) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Booking không tồn tại");
+  }
+
+  const wasConfirmed = booking.BookingStatus === "confirmed";
+
+  await bookingModel.setBookingStatus(bookingCode, "cancelled");
+  await cartService.removeEntriesForBookings([bookingCode]);
+
+  if (wasConfirmed) {
+    await bookingModel.decrementFieldRent(Number(booking.FieldCode));
+  }
+
+  return {
+    BookingCode: bookingCode,
+    FieldCode: booking.FieldCode,
   };
 }
 
