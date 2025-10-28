@@ -320,6 +320,22 @@ CONSTRAINT `FK_Bookings_Promotions` FOREIGN KEY (`PromotionID`) REFERENCES `Shop
 CONSTRAINT `FK_Bookings_Users` FOREIGN KEY (`CustomerUserID`) REFERENCES `Users` (`UserID`)
 ) ENGINE=InnoDB AUTO_INCREMENT=203 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- thuere.Booking_Carts definition
+
+CREATE TABLE `Booking_Carts` (
+`CartID` int NOT NULL AUTO_INCREMENT,
+`UserID` int NOT NULL,
+`BookingCode` int NOT NULL,
+`ExpiresAt` datetime NOT NULL,
+`CreatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`UpdatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (`CartID`),
+UNIQUE KEY `UK_BookingCarts_Booking` (`BookingCode`),
+KEY `IDX_BookingCarts_User` (`UserID`,`ExpiresAt`),
+CONSTRAINT `FK_BookingCarts_Users` FOREIGN KEY (`UserID`) REFERENCES `Users` (`UserID`),
+CONSTRAINT `FK_BookingCarts_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- thuere.Field_Slots definition
 
 CREATE TABLE `Field_Slots` (
