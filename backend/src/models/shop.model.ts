@@ -8,6 +8,9 @@ export type ShopDetailRow = {
   user_id: number;
   shop_name: string;
   address: string | null;
+  opening_time: string | null;
+  closing_time: string | null;
+  is_open_24h: number;
   is_approved: string;
   created_at: string | Date | null;
   updated_at: string | Date | null;
@@ -34,6 +37,9 @@ const shopModel = {
           s.UserID AS user_id,
           s.ShopName AS shop_name,
           s.Address AS address,
+          DATE_FORMAT(s.OpeningTime, '%H:%i') AS opening_time,
+          DATE_FORMAT(s.ClosingTime, '%H:%i') AS closing_time,
+          CASE WHEN s.IsOpen24Hours = 'Y' THEN 1 ELSE 0 END AS is_open_24h,
           s.IsApproved AS is_approved,
           s.CreateAt AS created_at,
           s.UpdateAt AS updated_at,
@@ -71,6 +77,9 @@ const shopModel = {
           s.UserID AS user_id,
           s.ShopName AS shop_name,
           s.Address AS address,
+          DATE_FORMAT(s.OpeningTime, '%H:%i') AS opening_time,
+          DATE_FORMAT(s.ClosingTime, '%H:%i') AS closing_time,
+          CASE WHEN s.IsOpen24Hours = 'Y' THEN 1 ELSE 0 END AS is_open_24h,
           s.IsApproved AS is_approved,
           s.CreateAt AS created_at,
           s.UpdateAt AS updated_at,
@@ -109,14 +118,36 @@ const shopModel = {
     connection: PoolConnection,
     userId: number,
     shopName: string,
-    address: string
+    address: string,
+    openingTime: string | null,
+    closingTime: string | null,
+    isOpen24Hours: boolean
   ): Promise<number> {
+    const sanitizedOpening = isOpen24Hours ? null : openingTime;
+    const sanitizedClosing = isOpen24Hours ? null : closingTime;
     const [insertRes] = await connection.query<ResultSetHeader>(
       `
-        INSERT INTO Shops (UserID, ShopName, Address, IsApproved, CreateAt, UpdateAt)
-        VALUES (?, ?, ?, 'Y', NOW(), NOW())
+        INSERT INTO Shops (
+          UserID,
+          ShopName,
+          Address,
+          OpeningTime,
+          ClosingTime,
+          IsOpen24Hours,
+          IsApproved,
+          CreateAt,
+          UpdateAt
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'Y', NOW(), NOW())
       `,
-      [userId, shopName.trim(), address.trim()]
+      [
+        userId,
+        shopName.trim(),
+        address.trim(),
+        sanitizedOpening,
+        sanitizedClosing,
+        isOpen24Hours ? "Y" : "N",
+      ]
     );
 
     return Number((insertRes as any)?.insertId ?? 0);
@@ -129,15 +160,32 @@ const shopModel = {
     connection: PoolConnection,
     shopCode: number,
     shopName: string,
-    address: string
+    address: string,
+    openingTime: string | null,
+    closingTime: string | null,
+    isOpen24Hours: boolean
   ): Promise<void> {
+    const sanitizedOpening = isOpen24Hours ? null : openingTime;
+    const sanitizedClosing = isOpen24Hours ? null : closingTime;
     await connection.query(
       `
         UPDATE Shops
-        SET ShopName = ?, Address = ?, UpdateAt = NOW()
+        SET ShopName = ?,
+            Address = ?,
+            OpeningTime = ?,
+            ClosingTime = ?,
+            IsOpen24Hours = ?,
+            UpdateAt = NOW()
         WHERE ShopCode = ?
       `,
-      [shopName.trim(), address.trim(), shopCode]
+      [
+        shopName.trim(),
+        address.trim(),
+        sanitizedOpening,
+        sanitizedClosing,
+        isOpen24Hours ? "Y" : "N",
+        shopCode,
+      ]
     );
   },
 

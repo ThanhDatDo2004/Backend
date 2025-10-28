@@ -24,6 +24,35 @@ const shopRequestSchema = z.object({
   message: z.string().trim().optional(),
 });
 
+const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const normalizeTimeInput = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    return trimmed.slice(0, 5);
+  }
+  return trimmed;
+};
+
+const timeToMinutes = (time: string): number => {
+  const [hours, minutes] = time.split(":").map((part) => Number(part));
+  return hours * 60 + minutes;
+};
+
+const toBoolFlexible = (value: unknown, fallback = false): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const lowered = value.trim().toLowerCase();
+    if (["1", "true", "y", "yes"].includes(lowered)) return true;
+    if (["0", "false", "n", "no"].includes(lowered)) return false;
+  }
+  return fallback;
+};
+
 const shopController = {
   async submitRequest(req: Request, res: Response, next: NextFunction) {
     try {
@@ -76,6 +105,9 @@ const shopController = {
         bank_account_number: z.string().trim().optional(),
         bank_name: z.string().trim().optional(),
         bank_account_holder: z.string().trim().optional(),
+        opening_time: z.union([z.string(), z.null()]).optional(),
+        closing_time: z.union([z.string(), z.null()]).optional(),
+        is_open_24h: z.union([z.boolean(), z.string(), z.number()]).optional(),
       });
 
       const parsed = schema.safeParse(req.body);
@@ -85,7 +117,47 @@ const shopController = {
         return next(new ApiError(StatusCodes.BAD_REQUEST, message));
       }
 
-      const updated = await shopService.updateByUserId(userId, parsed.data);
+      const data = parsed.data;
+      let openingTime = normalizeTimeInput(data.opening_time);
+      let closingTime = normalizeTimeInput(data.closing_time);
+      const isOpen24h = toBoolFlexible(data.is_open_24h, false);
+
+      if (isOpen24h) {
+        openingTime = null;
+        closingTime = null;
+      } else {
+        if (!openingTime || !closingTime) {
+          return next(
+            new ApiError(
+              StatusCodes.BAD_REQUEST,
+              "Vui lòng nhập đầy đủ giờ mở và giờ đóng cửa"
+            )
+          );
+        }
+        if (!TIME_REGEX.test(openingTime) || !TIME_REGEX.test(closingTime)) {
+          return next(
+            new ApiError(
+              StatusCodes.BAD_REQUEST,
+              "Giờ mở/đóng cửa phải có định dạng HH:MM"
+            )
+          );
+        }
+        if (timeToMinutes(openingTime) >= timeToMinutes(closingTime)) {
+          return next(
+            new ApiError(
+              StatusCodes.BAD_REQUEST,
+              "Giờ mở cửa phải nhỏ hơn giờ đóng cửa"
+            )
+          );
+        }
+      }
+
+      const updated = await shopService.updateByUserId(userId, {
+        ...data,
+        opening_time: openingTime,
+        closing_time: closingTime,
+        is_open_24h: isOpen24h,
+      });
       if (!updated) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop"));
       }

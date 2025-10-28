@@ -1,5 +1,6 @@
 import fieldModel from "../models/field.model";
 import pricingModel from "../models/pricing.model";
+import shopModel from "../models/shop.model";
 import ApiError from "../utils/apiErrors";
 
 export type CreateOperatingHoursRequest = {
@@ -79,6 +80,12 @@ const pricingService = {
     // Validate time format and logic
     this.validateTimeFormat(payload.startTime, payload.endTime);
 
+    await this.ensureWithinShopOperatingWindow(
+      payload.fieldCode,
+      payload.startTime,
+      payload.endTime
+    );
+
     // Check for overlapping time slots for the same day
     const overlapCount = await pricingModel.checkTimeOverlap(
       payload.fieldCode,
@@ -92,12 +99,6 @@ const pricingService = {
         400,
         "Khung giờ này đã trùng với khung giờ khác trong cùng ngày"
       );
-    }
-
-    // Get default price from Fields table
-    const field = await fieldModel.findById(payload.fieldCode);
-    if (!field) {
-      throw new ApiError(404, "Không tìm thấy sân");
     }
 
     const defaultPrice = await pricingModel.getDefaultPrice(payload.fieldCode);
@@ -169,6 +170,12 @@ const pricingService = {
         );
       }
     }
+
+    await this.ensureWithinShopOperatingWindow(
+      existingHours.field_code,
+      startTime,
+      endTime
+    );
 
     // Prepare update data
     const updateFields: any = {};
@@ -267,8 +274,57 @@ const pricingService = {
   },
 
   timeToMinutes(time: string): number {
-    const [hours, minutes] = time.split(":").map(Number);
+    const parts = time.split(":").map((part) => part.trim());
+    const hours = Number(parts[0] ?? "0");
+    const minutes = Number(parts[1] ?? "0");
     return hours * 60 + minutes;
+  },
+
+  async ensureWithinShopOperatingWindow(
+    fieldCode: number,
+    startTime: string,
+    endTime: string
+  ): Promise<void> {
+    const field = await fieldModel.findById(fieldCode);
+    if (!field) {
+      throw new ApiError(404, "Không tìm thấy sân");
+    }
+
+    const shop = await shopModel.getByCode(field.shop_code);
+    if (!shop) {
+      throw new ApiError(404, "Không tìm thấy shop");
+    }
+
+    const openingTime = (shop as any).opening_time as string | null;
+    const closingTime = (shop as any).closing_time as string | null;
+    const isOpen24hFlag = (shop as any).is_open_24h;
+    const isOpen24h =
+      typeof isOpen24hFlag === "boolean"
+        ? isOpen24hFlag
+        : Number(isOpen24hFlag ?? 0) === 1;
+
+    if (isOpen24h) {
+      return;
+    }
+
+    if (!openingTime || !closingTime) {
+      throw new ApiError(
+        400,
+        "Vui lòng thiết lập giờ mở và đóng cửa của shop trước khi thêm khung giờ hoạt động"
+      );
+    }
+
+    const shopOpenMinutes = this.timeToMinutes(openingTime);
+    const shopCloseMinutes = this.timeToMinutes(closingTime);
+    const startMinutes = this.timeToMinutes(startTime);
+    const endMinutes = this.timeToMinutes(endTime);
+
+    if (startMinutes < shopOpenMinutes || endMinutes > shopCloseMinutes) {
+      throw new ApiError(
+        400,
+        `Khung giờ phải nằm trong khoảng ${openingTime} - ${closingTime}`
+      );
+    }
   },
 };
 

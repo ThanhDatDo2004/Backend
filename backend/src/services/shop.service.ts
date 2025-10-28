@@ -1,6 +1,17 @@
 import shopModel from "../models/shop.model";
 import queryService from "./query";
 
+type ShopUpdatePayload = {
+  shop_name: string;
+  address: string;
+  bank_account_number?: string;
+  bank_name?: string;
+  bank_account_holder?: string;
+  opening_time?: string | null;
+  closing_time?: string | null;
+  is_open_24h?: boolean;
+};
+
 const shopService = {
   async getByUserId(userId: number) {
     return await shopModel.getByUserId(userId);
@@ -12,15 +23,18 @@ const shopService = {
 
   async updateByUserId(
     userId: number,
-    payload: {
-      shop_name: string;
-      address: string;
-      bank_account_number?: string;
-      bank_name?: string;
-      bank_account_holder?: string;
-    }
+    payload: ShopUpdatePayload
   ) {
     if (!Number.isFinite(userId)) return null;
+
+    const isOpen24Hours = Boolean(payload.is_open_24h);
+    const normalizeTime = (value?: string | null) => {
+      const trimmed = value?.trim();
+      if (!trimmed) return null;
+      return trimmed;
+    };
+    const openingTime = isOpen24Hours ? null : normalizeTime(payload.opening_time);
+    const closingTime = isOpen24Hours ? null : normalizeTime(payload.closing_time);
 
     const result = await queryService.execTransaction(
       "shopService.updateByUserId",
@@ -33,7 +47,10 @@ const shopService = {
             conn,
             userId,
             payload.shop_name,
-            payload.address
+            payload.address,
+            openingTime,
+            closingTime,
+            isOpen24Hours
           );
 
           if (!shopCode) return null;
@@ -43,7 +60,10 @@ const shopService = {
             conn,
             shopCode,
             payload.shop_name,
-            payload.address
+            payload.address,
+            openingTime,
+            closingTime,
+            isOpen24Hours
           );
         }
 
