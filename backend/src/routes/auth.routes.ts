@@ -8,6 +8,7 @@ const router = express.Router();
 
 router.post("/login", authController.login);
 router.post("/register", register);
+router.post("/guest", authController.guestToken);
 
 // OTP đăng ký
 router.post("/send-code", authController.sendCode);

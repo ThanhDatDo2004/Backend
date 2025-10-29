@@ -96,6 +96,8 @@ const authController = {
         level_code: levelCode,
         IsActive,
         isActive: Number(IsActive ?? 0) ? 1 : 0,
+        role: "user",
+        isGuest: false,
       };
 
       const token = await authService.generateAccessToken(normalizedUser);
@@ -112,6 +114,46 @@ const authController = {
     } catch (error: any) {
       next(
         new ApiError(StatusCodes.UNAUTHORIZED, error?.message || "Login Error")
+      );
+    }
+  },
+
+  async guestToken(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const guestId = Number(process.env.GUEST_CUSTOMER_USER_ID ?? 0);
+      if (!Number.isFinite(guestId) || guestId <= 0) {
+        return next(
+          new ApiError(
+            StatusCodes.INTERNAL_SERVER_ERROR,
+            "Guest user id is not configured"
+          )
+        );
+      }
+
+      const payload = {
+        UserID: guestId,
+        user_code: guestId,
+        role: "guest",
+        isGuest: true,
+      };
+
+      const token = await authService.generateAccessToken(payload);
+
+      return apiResponse.success(
+        res,
+        {
+          token,
+          user: payload,
+        },
+        "Guest access granted",
+        StatusCodes.OK
+      );
+    } catch (error) {
+      next(
+        new ApiError(
+          StatusCodes.INTERNAL_SERVER_ERROR,
+          (error as Error)?.message || "Không thể tạo guest token"
+        )
       );
     }
   },

@@ -7,12 +7,14 @@ const router = express.Router();
 // Customer endpoints
 router.get("/", requireAuth, bookingController.listBookings);
 router.post("/create", requireAuth, bookingController.createBooking);
-router.get("/:bookingCode", bookingController.getBooking);
+router.get("/:bookingCode", requireAuth, bookingController.getBooking);
 router.patch("/:bookingCode/cancel", requireAuth, bookingController.cancelBooking);
-router.get("/:bookingCode/checkin-code", bookingController.getCheckinCode);
-router.post("/:bookingCode/verify-checkin", bookingController.verifyCheckinCode);
+router.get("/:bookingCode/checkin-code", requireAuth, bookingController.getCheckinCode);
+router.post("/:bookingCode/verify-checkin", requireAuth, bookingController.verifyCheckinCode);
 
 // Admin endpoints
 router.patch("/:bookingCode/status", requireAuth, bookingController.updateBookingStatus);
+
+
 
 export default router;

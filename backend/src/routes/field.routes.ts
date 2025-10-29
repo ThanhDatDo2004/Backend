@@ -12,7 +12,7 @@ router.get("/:fieldCode/availability", fieldController.availability);
 router.get("/:fieldCode/utilities", fieldController.utilities);
 router.post(
   "/:fieldCode/bookings/confirm",
-  optionalAuth,
+  requireAuth,
   fieldController.confirmBooking
 );
 router.get("/:fieldCode", fieldController.detail);
@@ -34,8 +34,8 @@ router.put("/:fieldCode/sync-rent", fieldController.syncFieldRent);
 router.put("/sync/all", fieldController.syncAllFieldsRent);
 
 // Booking confirm/cancel with rent tracking
-router.put("/:bookingCode/confirm", bookingController.confirmBooking);
-router.put("/:bookingCode/cancel", bookingController.cancelBookingMethod);
+router.put("/:bookingCode/confirm", requireAuth, bookingController.confirmBooking);
+router.put("/:bookingCode/cancel", requireAuth, bookingController.cancelBookingMethod);
 
 // Booking endpoints
 router.get("/bookings", requireAuth, bookingController.listBookings);
@@ -47,6 +47,7 @@ router.patch(
 );
 router.post(
   "/bookings/:bookingCode/verify-checkin",
+  requireAuth,
   bookingController.verifyCheckinCode
 );
 router.get(

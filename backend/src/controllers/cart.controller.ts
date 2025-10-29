@@ -8,9 +8,21 @@ const cartController = {
   async listUserCart(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = Number((req as any).user?.UserID);
+      const isGuest =
+        Boolean((req as any).user?.isGuest) ||
+        String((req as any).user?.role || "").toLowerCase() === "guest";
       if (!Number.isFinite(userId) || userId <= 0) {
         return next(
           new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập để xem giỏ hàng")
+        );
+      }
+
+      if (isGuest) {
+        return next(
+          new ApiError(
+            StatusCodes.FORBIDDEN,
+            "Khách vãng lai không có quyền truy cập giỏ hàng"
+          )
         );
       }
 

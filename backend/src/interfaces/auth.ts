@@ -5,6 +5,8 @@ export type JwtUserPayload = {
   Email?: string | null;
   PhoneNumber?: string | null;
   isActive?: number;
+  role?: string;
+  isGuest?: boolean;
   [key: string]: unknown;
 };
 

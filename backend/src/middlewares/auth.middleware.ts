@@ -18,15 +18,22 @@ function extractToken(req: Request) {
 
 function attachUser(req: Request, payload: unknown) {
   if (payload && typeof payload === "object") {
-    req.user = payload as AuthenticatedUser;
+    const enriched = {
+      ...(payload as Record<string, unknown>),
+    } as AuthenticatedUser;
+    if (!enriched.role) {
+      enriched.role = "user";
+    }
+    if (enriched.role === "guest") {
+      enriched.isGuest = true;
+    } else {
+      enriched.isGuest = false;
+    }
+    req.user = enriched;
   }
 }
 
-export function requireAuth(
-  req: Request,
-  _res: Response,
-  next: NextFunction
-) {
+export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   try {
     const token = extractToken(req);
     if (!token) {
@@ -54,11 +61,7 @@ export function requireAuth(
   }
 }
 
-export function optionalAuth(
-  req: Request,
-  _res: Response,
-  next: NextFunction
-) {
+export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   const token = extractToken(req);
   if (!token) {
     return next();

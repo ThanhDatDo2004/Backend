@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
+import { badRequest, unauthorized } from "../utils/errors";
 import {
   cancelBookingByOwner,
   cancelCustomerBooking,
@@ -83,6 +84,9 @@ const bookingController = {
   async createBooking(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = Number((req as any).user?.UserID);
+      const isGuestUser =
+        Boolean((req as any).user?.isGuest) ||
+        String((req as any).user?.role || "").toLowerCase() === "guest";
       const {
         fieldCode,
         quantityID,
@@ -136,7 +140,7 @@ const bookingController = {
           phone: customerPhone,
         },
         created_by: userId,
-        isLoggedInCustomer: true,
+        isLoggedInCustomer: !isGuestUser,
       };
 
       if (Number.isFinite(numericQuantityId)) {

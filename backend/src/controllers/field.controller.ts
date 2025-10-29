@@ -35,30 +35,23 @@ const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
 })();
 
 const resolveBookingUser = (
-  req: Request,
-  candidate: unknown
-): { userId?: number; isLoggedInCustomer: boolean } => {
-  const authUserId = toNumber((req as any).user?.UserID);
+  req: Request
+): { userId?: number; isLoggedInCustomer: boolean; isGuest: boolean } => {
+  const authPayload = (req as any).user ?? {};
+  const authUserId = toNumber(authPayload?.UserID);
+  const role = typeof authPayload?.role === "string" ? authPayload.role : undefined;
+  const isGuest =
+    role === "guest" || authUserId === DEFAULT_GUEST_CUSTOMER_USER_ID;
+
   if (authUserId && authUserId > 0) {
     return {
       userId: authUserId,
-      isLoggedInCustomer: authUserId !== DEFAULT_GUEST_CUSTOMER_USER_ID,
+      isLoggedInCustomer: !isGuest,
+      isGuest,
     };
   }
 
-  const fallbackUserId = toNumber(candidate);
-  if (fallbackUserId && fallbackUserId > 0) {
-    return { userId: fallbackUserId, isLoggedInCustomer: false };
-  }
-
-  if (DEFAULT_GUEST_CUSTOMER_USER_ID > 0) {
-    return {
-      userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
-      isLoggedInCustomer: false,
-    };
-  }
-
-  return { userId: undefined, isLoggedInCustomer: false };
+  return { userId: undefined, isLoggedInCustomer: false, isGuest: false };
 };
 
 const fieldController = {
@@ -361,16 +354,11 @@ const fieldController = {
         );
       }
 
-      const bodyCreatedBy =
-        req.body?.created_by ??
-        req.body?.createdBy ??
-        req.body?.customerUserID ??
-        req.body?.customer_user_id;
-
-      const { userId: resolvedUserId, isLoggedInCustomer } = resolveBookingUser(
-        req,
-        bodyCreatedBy
-      );
+      const {
+        userId: resolvedUserId,
+        isLoggedInCustomer,
+        isGuest,
+      } = resolveBookingUser(req);
 
       if (!resolvedUserId) {
         return next(
@@ -388,6 +376,15 @@ const fieldController = {
       const promotionCodeInput = ([promotionCodeSnake, promotionCodeCamel].find(
         (code) => typeof code === "string" && code.trim()
       ) as string | undefined)?.trim();
+
+      if (promotionCodeInput && isGuest) {
+        return next(
+          new ApiError(
+            StatusCodes.FORBIDDEN,
+            "Khách vãng lai không được áp dụng mã giảm giá."
+          )
+        );
+      }
 
       const result = await bookingService.confirmFieldBooking(
         fieldCode,
