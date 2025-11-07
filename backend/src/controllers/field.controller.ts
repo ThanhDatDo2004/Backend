@@ -51,6 +51,17 @@ const resolveBookingUser = (
     };
   }
 
+  if (
+    Number.isFinite(DEFAULT_GUEST_CUSTOMER_USER_ID) &&
+    DEFAULT_GUEST_CUSTOMER_USER_ID > 0
+  ) {
+    return {
+      userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
+      isLoggedInCustomer: false,
+      isGuest: true,
+    };
+  }
+
   return { userId: undefined, isLoggedInCustomer: false, isGuest: false };
 };
 

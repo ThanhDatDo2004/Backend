@@ -133,7 +133,7 @@ type ShopRequestPayload = {
 export async function sendShopRequestEmail(payload: ShopRequestPayload) {
   const appName = process.env.APP_NAME || "ThueRe";
   const recipient =
-    process.env.SHOP_REQUEST_RECIPIENT || "kubjmisu1999@gmail.com";
+    process.env.SHOP_REQUEST_RECIPIENT || "thuere2004@gmail.com";
 
   const { full_name, email, phone_number, address, message } = payload;
 
