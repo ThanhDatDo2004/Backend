@@ -12,7 +12,7 @@ router.get("/:fieldCode/availability", fieldController.availability);
 router.get("/:fieldCode/utilities", fieldController.utilities);
 router.post(
   "/:fieldCode/bookings/confirm",
-  requireAuth,
+  optionalAuth,
   fieldController.confirmBooking
 );
 router.get("/:fieldCode", fieldController.detail);
