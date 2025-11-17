@@ -34,35 +34,46 @@ const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
   return 1;
 })();
 
-const resolveBookingUser = (
-  req: Request
-): { userId?: number; isLoggedInCustomer: boolean; isGuest: boolean } => {
-  const authPayload = (req as any).user ?? {};
-  const authUserId = toNumber(authPayload?.UserID);
-  const role = typeof authPayload?.role === "string" ? authPayload.role : undefined;
-  const isGuest =
-    role === "guest" || authUserId === DEFAULT_GUEST_CUSTOMER_USER_ID;
+// const resolveBookingUser = (
+//   req: Request
+// ): { userId?: number; isLoggedInCustomer: boolean; isGuest: boolean } => {
+//   const authPayload = req.user ?? {};
+//   const authUserId = toNumber(authPayload.UserID);
+//   const role = authPayload.role;
+//   const isGuest = role === "guest" || authUserId === DEFAULT_GUEST_CUSTOMER_USER_ID;
+//   if (authUserId && authUserId > 0) {
+//     return {
+//       userId: authUserId,
+//       isLoggedInCustomer: !isGuest,
+//       isGuest,
+//     };
+//   }
 
-  if (authUserId && authUserId > 0) {
-    return {
-      userId: authUserId,
-      isLoggedInCustomer: !isGuest,
-      isGuest,
-    };
+//   if (DEFAULT_GUEST_CUSTOMER_USER_ID) {
+//     return {
+//       userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
+//       isLoggedInCustomer: false,
+//       isGuest: true,
+//     };
+//   }
+
+//   return { userId: undefined, isLoggedInCustomer: false, isGuest: false };
+// };
+const resolveBookingUser = (req: Request) => {
+  const { UserID, role } = req.user ?? {};
+  const userId = toNumber(UserID);
+  const isGuest = role === "guest" || userId === DEFAULT_GUEST_CUSTOMER_USER_ID;
+
+  if (userId && userId > 0) {
+    return { userId, isLoggedInCustomer: !isGuest, isGuest };
   }
 
-  if (
-    Number.isFinite(DEFAULT_GUEST_CUSTOMER_USER_ID) &&
-    DEFAULT_GUEST_CUSTOMER_USER_ID > 0
-  ) {
-    return {
-      userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
-      isLoggedInCustomer: false,
-      isGuest: true,
-    };
+  const guestId = DEFAULT_GUEST_CUSTOMER_USER_ID;
+  if (Number(guestId) && guestId > 0) {
+    return { userId: guestId, isLoggedInCustomer: false, isGuest: true };
   }
 
-  return { userId: undefined, isLoggedInCustomer: false, isGuest: false };
+  return { isLoggedInCustomer: false, isGuest: false };
 };
 
 const fieldController = {
@@ -153,7 +164,7 @@ const fieldController = {
             filters: appliedFilters,
           },
         },
-        "Fetched fields successfully",
+        "Lấy sân thành công",
         StatusCodes.OK
       );
     } catch (error) {
@@ -380,13 +391,13 @@ const fieldController = {
         );
       }
 
-      const quantityId = toNumber(
-        quantity_id ?? quantityIdCamel ?? undefined
-      );
+      const quantityId = toNumber(quantity_id ?? quantityIdCamel ?? undefined);
 
-      const promotionCodeInput = ([promotionCodeSnake, promotionCodeCamel].find(
-        (code) => typeof code === "string" && code.trim()
-      ) as string | undefined)?.trim();
+      const promotionCodeInput = (
+        [promotionCodeSnake, promotionCodeCamel].find(
+          (code) => typeof code === "string" && code.trim()
+        ) as string | undefined
+      )?.trim();
 
       if (promotionCodeInput && isGuest) {
         return next(

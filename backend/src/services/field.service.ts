@@ -323,7 +323,7 @@ const fieldService = {
         fieldModel.count(filters),
       ]);
 
-      console.log(`✅ Got ${rows.length} rows, total: ${total}`);
+      console.log(`Got ${rows.length} rows, total: ${total}`);
 
       // Then run facet queries (less critical)
       const [sportTypesDb, addresses, statusCounts, approvalCounts] =
