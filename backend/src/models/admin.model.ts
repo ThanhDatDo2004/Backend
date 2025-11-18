@@ -18,6 +18,7 @@ export type ShopRow = {
   user_code: number;
   shop_name: string;
   address: string | null;
+  phone_number: string | null;
   isapproved: string | null;
 };
 
@@ -211,6 +212,7 @@ const adminModel = {
           s.UserID AS user_code,
           s.ShopName AS shop_name,
           s.Address AS address,
+          s.PhoneNumber AS phone_number,
           s.IsApproved AS isapproved
         FROM Shops s
         ORDER BY s.ShopCode DESC

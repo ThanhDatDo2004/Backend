@@ -137,6 +137,15 @@ function mapShopApprovalToDb(value?: string | null) {
   return SHOP_APPROVAL_REVERSE[normalized];
 }
 
+function normalizeShopOpen24h(value?: string | null) {
+  if (value === null || value === undefined) return undefined;
+  const normalized = value.toString().trim().toUpperCase();
+  if (!normalized) return undefined;
+  if (["Y", "1", "TRUE"].includes(normalized)) return true;
+  if (["N", "0", "FALSE"].includes(normalized)) return false;
+  return undefined;
+}
+
 const SLOT_INTERVAL_MINUTES = 60;
 
 function timeStringToMinutes(value: string) {
@@ -1071,6 +1080,10 @@ const fieldService = {
         user_code: row.shop_user_id,
         shop_name: row.shop_name,
         address: row.shop_address ?? "",
+        phone_number: row.shop_phone_number ?? "",
+        opening_time: row.shop_opening_time ?? null,
+        closing_time: row.shop_closing_time ?? null,
+        is_open_24h: normalizeShopOpen24h(row.shop_is_open_24h),
         bank_account_number: "",
         bank_name: "",
         isapproved: row.shop_is_approved === "Y" ? 1 : 0,

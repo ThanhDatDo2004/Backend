@@ -105,6 +105,17 @@ const shopController = {
         bank_account_number: z.string().trim().optional(),
         bank_name: z.string().trim().optional(),
         bank_account_holder: z.string().trim().optional(),
+        phone_number: z
+          .string()
+          .trim()
+          .optional()
+          .refine(
+            (value) =>
+              value === undefined ||
+              value === "" ||
+              /^[0-9]{10,11}$/.test(value),
+            "Số điện thoại phải có 10-11 chữ số"
+          ),
         opening_time: z.union([z.string(), z.null()]).optional(),
         closing_time: z.union([z.string(), z.null()]).optional(),
         is_open_24h: z.union([z.boolean(), z.string(), z.number()]).optional(),

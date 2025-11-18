@@ -8,6 +8,7 @@ export type ShopDetailRow = {
   user_id: number;
   shop_name: string;
   address: string | null;
+  phone_number: string | null;
   opening_time: string | null;
   closing_time: string | null;
   is_open_24h: number;
@@ -37,6 +38,7 @@ const shopModel = {
           s.UserID AS user_id,
           s.ShopName AS shop_name,
           s.Address AS address,
+          s.PhoneNumber AS phone_number,
           DATE_FORMAT(s.OpeningTime, '%H:%i') AS opening_time,
           DATE_FORMAT(s.ClosingTime, '%H:%i') AS closing_time,
           CASE WHEN s.IsOpen24Hours = 'Y' THEN 1 ELSE 0 END AS is_open_24h,
@@ -77,6 +79,7 @@ const shopModel = {
           s.UserID AS user_id,
           s.ShopName AS shop_name,
           s.Address AS address,
+          s.PhoneNumber AS phone_number,
           DATE_FORMAT(s.OpeningTime, '%H:%i') AS opening_time,
           DATE_FORMAT(s.ClosingTime, '%H:%i') AS closing_time,
           CASE WHEN s.IsOpen24Hours = 'Y' THEN 1 ELSE 0 END AS is_open_24h,
@@ -119,6 +122,7 @@ const shopModel = {
     userId: number,
     shopName: string,
     address: string,
+    phoneNumber: string | null,
     openingTime: string | null,
     closingTime: string | null,
     isOpen24Hours: boolean
@@ -131,6 +135,7 @@ const shopModel = {
           UserID,
           ShopName,
           Address,
+          PhoneNumber,
           OpeningTime,
           ClosingTime,
           IsOpen24Hours,
@@ -138,12 +143,13 @@ const shopModel = {
           CreateAt,
           UpdateAt
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'Y', NOW(), NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'Y', NOW(), NOW())
       `,
       [
         userId,
         shopName.trim(),
         address.trim(),
+        phoneNumber,
         sanitizedOpening,
         sanitizedClosing,
         isOpen24Hours ? "Y" : "N",
@@ -161,6 +167,7 @@ const shopModel = {
     shopCode: number,
     shopName: string,
     address: string,
+    phoneNumber: string | null,
     openingTime: string | null,
     closingTime: string | null,
     isOpen24Hours: boolean
@@ -172,6 +179,7 @@ const shopModel = {
         UPDATE Shops
         SET ShopName = ?,
             Address = ?,
+            PhoneNumber = ?,
             OpeningTime = ?,
             ClosingTime = ?,
             IsOpen24Hours = ?,
@@ -181,6 +189,7 @@ const shopModel = {
       [
         shopName.trim(),
         address.trim(),
+        phoneNumber,
         sanitizedOpening,
         sanitizedClosing,
         isOpen24Hours ? "Y" : "N",

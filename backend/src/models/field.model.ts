@@ -39,6 +39,10 @@ export type FieldRow = {
   shop_address: string | null;
   shop_user_id: number;
   shop_is_approved: string | null;
+  shop_phone_number: string | null;
+  shop_opening_time: string | null;
+  shop_closing_time: string | null;
+  shop_is_open_24h: string | null;
 };
 
 export type FieldSlotRow = {
@@ -90,7 +94,11 @@ const BASE_SELECT = `
     s.ShopName AS shop_name,
     s.Address AS shop_address,
     s.UserID AS shop_user_id,
-    s.IsApproved AS shop_is_approved
+    s.IsApproved AS shop_is_approved,
+    s.PhoneNumber AS shop_phone_number,
+    DATE_FORMAT(s.OpeningTime, '%H:%i') AS shop_opening_time,
+    DATE_FORMAT(s.ClosingTime, '%H:%i') AS shop_closing_time,
+    s.IsOpen24Hours AS shop_is_open_24h
   FROM Fields f
   JOIN Shops s ON s.ShopCode = f.ShopCode
   JOIN Users u ON u.UserID = s.UserID
@@ -195,7 +203,11 @@ const fieldModel = {
         s.ShopName,
         s.Address,
         s.UserID,
-        s.IsApproved
+        s.IsApproved,
+        s.PhoneNumber,
+        s.OpeningTime,
+        s.ClosingTime,
+        s.IsOpen24Hours
       ${order}
       LIMIT ? OFFSET ?
     `;

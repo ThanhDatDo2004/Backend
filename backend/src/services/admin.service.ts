@@ -104,6 +104,7 @@ const adminService = {
         user_code: shop.user_code,
         shop_name: shop.shop_name,
         address: shop.address ?? "",
+        phone_number: shop.phone_number ?? "",
         bank_name: bank?.bank_name ?? "",
         bank_account_number: bank?.bank_account_number ?? "",
         isapproved: toBooleanInt(shop.isapproved ?? null),

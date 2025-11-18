@@ -470,6 +470,7 @@ const fieldController = {
           f.DefaultPricePerHour,
           f.SportType,
           s.ShopName,
+          s.PhoneNumber,
           (SELECT COUNT(*) FROM Bookings
            WHERE FieldCode = f.FieldCode
            AND BookingStatus = 'confirmed') as confirmed_count,

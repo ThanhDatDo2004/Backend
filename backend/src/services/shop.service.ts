@@ -7,6 +7,7 @@ type ShopUpdatePayload = {
   bank_account_number?: string;
   bank_name?: string;
   bank_account_holder?: string;
+  phone_number?: string;
   opening_time?: string | null;
   closing_time?: string | null;
   is_open_24h?: boolean;
@@ -35,19 +36,20 @@ const shopService = {
     };
     const openingTime = isOpen24Hours ? null : normalizeTime(payload.opening_time);
     const closingTime = isOpen24Hours ? null : normalizeTime(payload.closing_time);
+    const phoneNumber = (payload.phone_number || "").trim() || null;
 
     const result = await queryService.execTransaction(
       "shopService.updateByUserId",
       async (conn) => {
         let shopCode = await shopModel.getShopCodeByUserId(userId);
 
-        // If no existing shop, create new one
         if (!shopCode) {
           shopCode = await shopModel.createShop(
             conn,
             userId,
             payload.shop_name,
             payload.address,
+            phoneNumber,
             openingTime,
             closingTime,
             isOpen24Hours
@@ -61,6 +63,7 @@ const shopService = {
             shopCode,
             payload.shop_name,
             payload.address,
+            phoneNumber,
             openingTime,
             closingTime,
             isOpen24Hours
