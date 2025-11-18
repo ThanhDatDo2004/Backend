@@ -29,6 +29,7 @@ import ApiError from "./utils/apiErrors";
 import { errorHandlingMiddleware } from "./middlewares/errorMiddlewares";
 import morgan from "morgan";
 import pool from "./configs/db.config";
+
 const app = express();
 const allowedOrigins = ["http://localhost:5173"];
 // sau này deploy thì thêm "https://ten-mien-cua-ban.com"

@@ -45,12 +45,7 @@ const authQueries = {
       0       -- _destroy
     )
   `,
-  // Password,
-  // PhoneNumber,
-  // NULL,   -- PhoneNumber (nullable)
-  //     NULL,   -- Password (plaintext - không dùng, để NULL)
 
-  // OTP / mã xác thực email (Users_Verification: PascalCase chuẩn)
   insertVerifyCode: `
     INSERT INTO Users_Verification (UserCode, Email, Code, ExpiresAt, Consumed)
     VALUES (?, ?, ?, ?, 'N')

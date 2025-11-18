@@ -36,10 +36,6 @@ const parseBookingCodeParam = (value: string): number | null => {
 };
 
 const bookingController = {
-  /**
-   * Liệt kê booking của customer
-   * GET /api/bookings
-   */
   async listBookings(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = Number((req as any).user?.UserID);
@@ -118,8 +114,7 @@ const bookingController = {
         );
       }
 
-      const finalQuantityID =
-        quantity_id ?? quantityID ?? null;
+      const finalQuantityID = quantity_id ?? quantityID ?? null;
       const numericQuantityId =
         finalQuantityID !== null && finalQuantityID !== undefined
           ? Number(finalQuantityID)
@@ -379,12 +374,7 @@ const bookingController = {
 
       const result = await getBookingCheckinCode(normalizedCode);
 
-      return apiResponse.success(
-        res,
-        result,
-        "Mã check-in",
-        StatusCodes.OK
-      );
+      return apiResponse.success(res, result, "Mã check-in", StatusCodes.OK);
     } catch (error) {
       next(
         new ApiError(

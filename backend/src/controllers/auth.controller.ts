@@ -13,9 +13,8 @@ import {
   sendResetPasswordEmail,
 } from "../services/mail.service";
 
-// ====== OTP store (demo) ======
 const otpStore = new Map<string, { code: string; expiresAt: number }>();
-const OTP_TTL_MS = 15 * 60 * 1000; // 15 phút
+const OTP_TTL_MS = 15 * 60 * 1000; 
 
 function genOTP(len = 6) {
   return Math.floor(Math.random() * 10 ** len)
@@ -23,7 +22,6 @@ function genOTP(len = 6) {
     .padStart(len, "0");
 }
 
-// =================== LOGIN ===================
 const authController = {
   async login(req: Request, res: Response, next: NextFunction) {
     try {
@@ -69,6 +67,7 @@ const authController = {
           )
         );
       }
+
       const isMatch = await authService.verifyPassword(password, PasswordHash);
       if (!isMatch) {
         return next(
@@ -78,26 +77,13 @@ const authController = {
           )
         );
       }
-
-      // Đơn giản hóa việc chuẩn hóa dữ liệu user
-      // const userId = Number(
-      //   (user as any)?.UserID ?? (user as any)?.user_code ?? 0
-      // );
       const userId = Number(user?.UserID ?? 0);
-
-      // const levelCode = Number(
-      //   (user as any)?.LevelCode ?? (user as any)?.level_code
-      // );
       const levelCode = Number(user?.LevelCode);
-
       const normalizedUser = {
         ...dataUser,
         UserID: userId,
-        // user_code: userId,
-        // level_code: levelCode,
         LevelCode: levelCode,
         IsActive,
-        // isActive: Number(IsActive ?? 0) ? 1 : 0,
         role: "user",
         isGuest: false,
       };
@@ -239,7 +225,6 @@ const authController = {
     otpStore.delete(email);
     return res.json({ success: true, message: "Xác minh thành công" });
   },
-
 
   // =================== FORGOT PASSWORD (gửi link) ===================
   async forgotPassword(req: Request, res: Response) {

@@ -4,10 +4,7 @@ import queryService from "../services/query";
 
 const authModel = {
   async getUserAuth(login: string) {
-    return await queryService.execQueryOne(authQueries.getUserAuth, [
-      login,
-      login,
-    ]);
+    return await queryService.execQueryOne(authQueries.getUserAuth, [login]);
   },
 
   // Giữ chữ ký như cũ để không ảnh hưởng nơi khác

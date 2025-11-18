@@ -15,21 +15,4 @@ const pool: Pool = createPool({
   charset: "UTF8MB4_UNICODE_CI",
 });
 
-// Test connection on startup
-pool
-  .getConnection()
-  .then((conn) => {
-    console.log("✅ Database connected successfully");
-    conn.release();
-  })
-  .catch((err) => {
-    console.error("❌ Database connection failed:", err.message);
-    console.error("Config:", {
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT,
-      user: process.env.DB_USER,
-      database: process.env.DB_NAME,
-    });
-  });
-
 export default pool;
