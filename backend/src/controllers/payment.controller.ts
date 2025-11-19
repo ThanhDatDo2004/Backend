@@ -15,11 +15,17 @@ const paymentController = {
     try {
       const { bookingCode } = req.params;
       const { payment_method = "bank_transfer" } = req.body;
-      const userId = (req as any).user?.UserID;
+      const userId = Number((req as any).user?.UserID);
 
       if (!bookingCode) {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
+        );
+      }
+
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return next(
+          new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập")
         );
       }
 
@@ -43,9 +49,10 @@ const paymentController = {
       if (numericMatch) {
         const numCode = Number(numericMatch[1]);
         const [bookingRows] = await queryService.query<RowDataPacket[]>(
-          `SELECT b.*, f.ShopCode, f.FieldCode, f.DefaultPricePerHour 
+          `SELECT b.*, f.ShopCode, f.FieldCode, f.DefaultPricePerHour, s.UserID AS ShopOwnerUserID
            FROM Bookings b
            JOIN Fields f ON b.FieldCode = f.FieldCode
+           JOIN Shops s ON f.ShopCode = s.ShopCode
            WHERE b.BookingCode = ?`,
           [numCode]
         );
@@ -59,6 +66,17 @@ const paymentController = {
       }
 
       const booking = existingBooking;
+      const customerUserId = Number(booking.CustomerUserID);
+      const shopOwnerUserId = Number(booking.ShopOwnerUserID);
+
+      if (customerUserId !== userId && shopOwnerUserId !== userId) {
+        return next(
+          new ApiError(
+            StatusCodes.FORBIDDEN,
+            "Bạn không có quyền thanh toán cho booking này"
+          )
+        );
+      }
 
       // Kiểm tra booking chưa thanh toán
       if (booking.PaymentStatus === "paid") {
@@ -69,8 +87,11 @@ const paymentController = {
 
       // Lấy admin bank account (default)
       const [bankRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT AdminBankID FROM Admin_Bank_Accounts WHERE IsDefault = 'Y' LIMIT 1`,
-        []
+        `SELECT AdminBankID, BankName, AccountNumber, AccountHolder
+         FROM Admin_Bank_Accounts
+         WHERE IsDefault = 'Y' AND (IsActive = 'Y' OR IsActive IS NULL)
+         ORDER BY UpdateAt DESC
+         LIMIT 1`
       );
 
       if (!bankRows?.[0]) {
@@ -82,7 +103,8 @@ const paymentController = {
         );
       }
 
-      const adminBankID = bankRows[0].AdminBankID;
+      const bankRecord = bankRows[0];
+      const adminBankID = bankRecord.AdminBankID;
 
       // Tạo payment record với BookingCode thực (INT)
       const paymentInfo = await paymentService.initiatePayment(
@@ -123,6 +145,13 @@ const paymentController = {
           amount: amount,
           expiresIn: 900,
           bookingId: booking.BookingCode,
+          paymentMethod: payment_method,
+          bankAccount: {
+            adminBankId: adminBankID,
+            bankName: bankRecord.BankName,
+            accountNumber: bankRecord.AccountNumber,
+            accountHolder: bankRecord.AccountHolder,
+          },
         },
         "Khởi tạo thanh toán thành công",
         StatusCodes.OK

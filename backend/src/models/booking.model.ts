@@ -679,6 +679,16 @@ const bookingModel = {
     );
 
     await queryService.query<ResultSetHeader>(
+      `UPDATE Field_Slots
+       SET Status = 'available',
+           BookingCode = NULL,
+           HoldExpiresAt = NULL,
+           UpdateAt = NOW()
+       WHERE BookingCode IN (?)`,
+      [bookingCodes]
+    );
+
+    await queryService.query<ResultSetHeader>(
       `UPDATE Payments_Admin
        SET PaymentStatus = 'failed',
            UpdateAt = NOW()

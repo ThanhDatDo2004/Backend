@@ -178,7 +178,7 @@ export async function sendShopRequestStatusEmail(options: {
 
   const defaultMessage =
     status === "approved"
-      ? "Chúc mừng! Yêu cầu mở shop của bạn đã được duyệt. Bạn có thể đăng nhập và bắt đầu thiết lập gian hàng của mình ngay bây giờ."
+      ? "Chúc mừng! Yêu cầu mở shop của bạn đã được duyệt. Bạn có thể đăng nhập và bắt đầu thiết lập gian hàng của mình ngay bây giờ. Vui lòng làm theo các hướng dẫn khi thiết lập"
       : "Rất tiếc, yêu cầu mở shop của bạn chưa thể được duyệt vào thời điểm này. Bạn có thể cập nhật lại thông tin và gửi yêu cầu mới khi đã sẵn sàng.";
 
   const info = await transporter.sendMail({

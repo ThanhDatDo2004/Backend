@@ -272,7 +272,8 @@ async function updateExistingSlot(
   await connection.query<ResultSetHeader>(
     `
       UPDATE Field_Slots
-      SET Status = 'booked',
+      SET Status = 'available',
+          BookingCode = NULL,
           HoldExpiresAt = NULL,
           QuantityID = IFNULL(?, QuantityID),
           UpdateAt = NOW()
@@ -1146,6 +1147,30 @@ export async function cleanupExpiredHeldSlots() {
   } catch (e) {
     console.error("Lỗi xóa khung giờ đã hết hạn:", e);
   }
+}
+
+export async function cancelStalePendingBookingsForShop(shopCode: number) {
+  if (!Number.isFinite(shopCode) || shopCode <= 0) {
+    return;
+  }
+
+  const [rows] = await queryService.query<RowDataPacket[]>(
+    `SELECT BookingCode
+     FROM Bookings
+     WHERE BookingStatus = 'pending'
+       AND TIMESTAMPDIFF(MINUTE, CreateAt, NOW()) > 10
+       AND FieldCode IN (SELECT FieldCode FROM Fields WHERE ShopCode = ?)`,
+    [shopCode]
+  );
+
+  const codes = rows
+    .map((row) => Number(row.BookingCode))
+    .filter((code) => Number.isFinite(code) && code > 0);
+
+  if (!codes.length) return;
+
+  await bookingModel.cancelExpiredBookings(codes);
+  await cartService.removeEntriesForBookings(codes);
 }
 
 const bookingService = {

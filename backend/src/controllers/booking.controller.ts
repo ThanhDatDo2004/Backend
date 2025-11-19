@@ -9,13 +9,14 @@ import {
   confirmFieldBooking,
   getBookingCheckinCode,
   getCustomerBookingDetail,
+  cancelStalePendingBookingsForShop,
   listCustomerBookings,
   updateBookingStatus,
   verifyBookingCheckin,
 } from "../services/booking.service";
 import type { ConfirmBookingPayload } from "../services/booking.service";
 import queryService from "../services/query";
-import { RowDataPacket, ResultSetHeader } from "mysql2";
+import { RowDataPacket } from "mysql2";
 import cartService from "../services/cart.service";
 
 const parseBookingCodeParam = (value: string): number | null => {
@@ -419,17 +420,7 @@ const bookingController = {
 
       const shopCode = shops[0].ShopCode;
 
-      // Auto-cancel pending bookings older than 10 minutes
-      await queryService.query<ResultSetHeader>(
-        `UPDATE Bookings 
-         SET BookingStatus = 'cancelled', 
-             PaymentStatus = 'failed',
-             UpdateAt = NOW()
-         WHERE BookingStatus = 'pending' 
-         AND TIMESTAMPDIFF(MINUTE, CreateAt, NOW()) > 10
-         AND FieldCode IN (SELECT FieldCode FROM Fields WHERE ShopCode = ?)`,
-        [shopCode]
-      );
+      await cancelStalePendingBookingsForShop(shopCode);
 
       let query = `SELECT b.BookingCode, b.FieldCode, b.CustomerUserID, 
                           b.BookingStatus, b.PaymentStatus, b.TotalPrice, b.NetToShop,
@@ -543,6 +534,46 @@ const bookingController = {
         countParams
       );
 
+      const [bookingSummaryRows] = await queryService.query<RowDataPacket[]>(
+        `SELECT b.BookingStatus, COUNT(*) AS total
+         FROM Bookings b
+         JOIN Fields f ON b.FieldCode = f.FieldCode
+         WHERE f.ShopCode = ?
+         GROUP BY b.BookingStatus`,
+        [shopCode]
+      );
+      const bookingSummary: Record<string, number> = {
+        pending: 0,
+        confirmed: 0,
+        completed: 0,
+        cancelled: 0,
+      };
+      bookingSummaryRows.forEach((row) => {
+        if (row.BookingStatus) {
+          bookingSummary[String(row.BookingStatus)] = Number(row.total || 0);
+        }
+      });
+
+      const [paymentSummaryRows] = await queryService.query<RowDataPacket[]>(
+        `SELECT b.PaymentStatus, COUNT(*) AS total
+         FROM Bookings b
+         JOIN Fields f ON b.FieldCode = f.FieldCode
+         WHERE f.ShopCode = ?
+         GROUP BY b.PaymentStatus`,
+        [shopCode]
+      );
+      const paymentSummary: Record<string, number> = {
+        pending: 0,
+        paid: 0,
+        failed: 0,
+        refunded: 0,
+      };
+      paymentSummaryRows.forEach((row) => {
+        if (row.PaymentStatus) {
+          paymentSummary[String(row.PaymentStatus)] = Number(row.total || 0);
+        }
+      });
+
       return apiResponse.success(
         res,
         {
@@ -551,6 +582,10 @@ const bookingController = {
             limit: validLimit,
             offset: validOffset,
             total: countRows?.[0]?.total || 0,
+          },
+          summary: {
+            bookingStatus: bookingSummary,
+            paymentStatus: paymentSummary,
           },
         },
         "Danh sách booking của shop",
