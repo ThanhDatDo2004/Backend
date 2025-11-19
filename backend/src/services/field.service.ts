@@ -8,6 +8,7 @@ import fieldModel, {
   BookingSlotRow,
   FieldSorting,
 } from "../models/field.model";
+import fieldQuantityModel from "../models/fieldQuantity.model";
 import s3Service from "./s3.service";
 import queryService from "./query";
 import ApiError from "../utils/apiErrors";
@@ -112,12 +113,14 @@ function mapSportTypeToLabel(value?: string | null) {
 }
 
 function mapStatus(value?: string | null) {
-  if (!value) return "trống";
+  if (!value) return "inactive";
   const dbValue = mapStatusToDb(value);
-  if (dbValue) {
-    return STATUS_LABELS[dbValue];
+  if (dbValue) return dbValue;
+  const normalized = value.trim().toLowerCase();
+  if (normalized && STATUS_REVERSE[normalized]) {
+    return STATUS_REVERSE[normalized];
   }
-  return value;
+  return normalized || "inactive";
 }
 
 function mapStatusToDb(value?: string | null): FieldStatusDb | undefined {
@@ -356,9 +359,13 @@ const fieldService = {
 
       const statusFacet = statusCounts.map((item) => {
         const total = Number(item.total ?? 0);
+        const normalizedStatus = mapStatus(item.status ?? undefined) as FieldStatusDb;
         return {
-          value: item.status ?? "unknown",
-          label: mapStatus(item.status ?? undefined),
+          value: normalizedStatus ?? "unknown",
+          label:
+            (normalizedStatus && STATUS_LABELS[normalizedStatus]) ||
+            normalizedStatus ||
+            "unknown",
           total,
           count: total,
         };
@@ -527,10 +534,9 @@ const fieldService = {
     // Check: Có future bookings không?
     const hasFuture = await fieldModel.hasFutureBookings(fieldCode);
     if (hasFuture) {
-      // ❌ CÓ FUTURE BOOKINGS → BLOCK DELETION
       const err = new ApiError(
         StatusCodes.CONFLICT,
-        "Sân có đơn đặt trong tương lai, không thể xóa."
+        "Đang có đơn đặt, không thể xoá sân."
       );
       (err as any).code = "FUTURE_BOOKINGS";
       throw err;
@@ -543,54 +549,59 @@ const fieldService = {
       return ok ? { deleted: true } : null;
     }
 
-    // Hard delete: remove images from storage, delete image rows, then delete field
-    const images = await fieldModel.listAllImagesForField(fieldCode);
-    const deletions: Promise<unknown>[] = [];
-    for (const img of images as Array<{ image_url: string }>) {
-      const imageUrl = (img.image_url || "").trim();
-      if (!imageUrl) continue;
-      try {
-        const parsed = new URL(imageUrl);
-        const host = (parsed.host || parsed.hostname || "").toLowerCase();
-        if (host.includes("amazonaws.com") || host.includes("s3")) {
-          const pathname = parsed.pathname.replace(/^\/+/, "");
-          const bucket = parsed.hostname.split(".")[0];
-          if (bucket && pathname) {
-            deletions.push(
-              s3Service.deleteObject(bucket, pathname).catch(() => undefined)
+    try {
+      const images = await fieldModel.listAllImagesForField(fieldCode);
+      const deletions: Promise<unknown>[] = [];
+      for (const img of images as Array<{ image_url: string }>) {
+        const imageUrl = (img.image_url || "").trim();
+        if (!imageUrl) continue;
+        try {
+          const parsed = new URL(imageUrl);
+          const host = (parsed.host || parsed.hostname || "").toLowerCase();
+          if (host.includes("amazonaws.com") || host.includes("s3")) {
+            const pathname = parsed.pathname.replace(/^\/+/, "");
+            const bucket = parsed.hostname.split(".")[0];
+            if (bucket && pathname) {
+              deletions.push(
+                s3Service.deleteObject(bucket, pathname).catch(() => undefined)
+              );
+            }
+          } else if (
+            imageUrl.startsWith("/uploads/") ||
+            imageUrl.startsWith("/public/")
+          ) {
+            const absolutePath = path.join(
+              process.cwd(),
+              imageUrl.replace(/^\/+/, "")
             );
+            deletions.push(fs.unlink(absolutePath).catch(() => undefined));
           }
-        } else if (
-          imageUrl.startsWith("/uploads/") ||
-          imageUrl.startsWith("/public/")
-        ) {
-          const absolutePath = path.join(
-            process.cwd(),
-            imageUrl.replace(/^\/+/, "")
-          );
-          deletions.push(fs.unlink(absolutePath).catch(() => undefined));
+        } catch {
+          // ignore invalid url
         }
-      } catch {
-        // ignore
       }
+      await Promise.allSettled(deletions);
+
+      await fieldModel.deleteAllImagesForField(fieldCode);
+      await fieldModel.deleteAllPricingForField(fieldCode);
+      await fieldModel.deleteAllBookingsForField(fieldCode);
+
+      const ok = await fieldModel.hardDeleteField(fieldCode);
+      return ok ? { deleted: true } : null;
+    } catch (error) {
+      const mysqlCode = (error as any)?.code;
+      const mysqlErrno = Number((error as any)?.errno ?? 0);
+      if (
+        mysqlCode === "ER_ROW_IS_REFERENCED_2" ||
+        mysqlErrno === 1451
+      ) {
+        throw new ApiError(
+          StatusCodes.CONFLICT,
+          "Đang có đơn đặt, không thể xoá sân."
+        );
+      }
+      throw error;
     }
-    await Promise.allSettled(deletions);
-
-    // DELETION SEQUENCE (respecting FK constraints):
-    // Step 1: Delete images from database (Field_Images → Fields)
-    await fieldModel.deleteAllImagesForField(fieldCode);
-
-    // Step 2: Delete pricing from database (Field_Pricing → Fields)
-    await fieldModel.deleteAllPricingForField(fieldCode);
-
-    // Step 3: Delete bookings from database (Bookings → Fields)
-    // Note: This deletes ALL bookings (past, present, cancelled, completed, etc.)
-    //       because they have already been checked to be non-future
-    await fieldModel.deleteAllBookingsForField(fieldCode);
-
-    // Step 4: Delete field itself (all FK constraints now resolved)
-    const ok = await fieldModel.hardDeleteField(fieldCode);
-    return ok ? { deleted: true } : null;
   },
 
   async getById(fieldCode: number) {
@@ -967,6 +978,7 @@ const fieldService = {
       address: string;
       price_per_hour: number;
       status: string;
+      quantity_count: number;
     }>
   ) {
     const shop = await fieldModel.findShopByCode(shopCode);
@@ -1003,7 +1015,7 @@ const fieldService = {
     if (payload.address) {
       dataToUpdate.address = payload.address.trim();
     }
-    if (payload.price_per_hour) {
+    if (payload.price_per_hour !== undefined) {
       const parsedPrice = Number(payload.price_per_hour);
       if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
         throw new ApiError(
@@ -1021,14 +1033,54 @@ const fieldService = {
       dataToUpdate.status = statusDb;
     }
 
-    if (Object.keys(dataToUpdate).length === 0) {
-      return this.getById(fieldId);
+    const quantityCountInput = payload.quantity_count;
+    if (quantityCountInput !== undefined) {
+      const parsedCount = Number(quantityCountInput);
+      if (!Number.isInteger(parsedCount) || parsedCount <= 0) {
+        throw new ApiError(
+          StatusCodes.BAD_REQUEST,
+          "Số lượng sân phải là số nguyên dương"
+        );
+      }
+
+      const currentCount =
+        await fieldQuantityService.getTotalCount(fieldId);
+      if (parsedCount > currentCount) {
+        const toAdd = parsedCount - currentCount;
+        const maxNumber =
+          await fieldQuantityService.getMaxQuantityNumber(fieldId);
+        for (let i = 1; i <= toAdd; i++) {
+          await fieldQuantityModel.create(fieldId, maxNumber + i);
+        }
+      } else if (parsedCount < currentCount) {
+        const futureBooked =
+          await fieldQuantityService.countFutureBookedQuantities(fieldId);
+        if (parsedCount < futureBooked) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            `Đang có ${futureBooked} sân đã được đặt trong tương lai. Không thể giảm xuống thấp hơn ${futureBooked}.`
+          );
+        }
+        const removableIds = await fieldQuantityService.getRemovableQuantityIds(
+          fieldId,
+          currentCount - parsedCount
+        );
+        if (removableIds.length < currentCount - parsedCount) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            "Đang có sân được đặt trong tương lai, không thể giảm thêm số lượng."
+          );
+        }
+        await fieldQuantityService.deleteQuantitiesByIds(removableIds);
+      }
     }
 
-    const updated = await fieldModel.updateField(fieldId, dataToUpdate);
+    if (Object.keys(dataToUpdate).length > 0) {
+      const updated = await fieldModel.updateField(fieldId, dataToUpdate);
 
-    if (!updated) {
-      return null;
+      if (!updated) {
+        return null;
+      }
     }
 
     return this.getById(fieldId);
@@ -1075,6 +1127,7 @@ const fieldService = {
       address: row.address ?? "",
       status: mapStatus(row.status),
       images: imagesByField.get(row.field_code) ?? [],
+      quantityCount: (quantitiesByField.get(row.field_code) ?? []).length,
       shop: {
         shop_code: row.shop_code,
         user_code: row.shop_user_id,

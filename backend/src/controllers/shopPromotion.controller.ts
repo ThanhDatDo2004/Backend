@@ -38,14 +38,13 @@ const promotionSchema = z
       .optional()
       .transform((val) => (val && val.length ? val : null)),
     discount_type: z.enum(["percent", "fixed"]),
-    discount_value: z
-      .preprocess(
-        (value) =>
-          value === "" || value === null || value === undefined
-            ? undefined
-            : value,
-        z.number().positive("Giá trị giảm phải lớn hơn 0")
-      ),
+    discount_value: z.preprocess(
+      (value) =>
+        value === "" || value === null || value === undefined
+          ? undefined
+          : value,
+      z.number().positive("Giá trị giảm phải lớn hơn 0")
+    ),
     max_discount_amount: z
       .preprocess(
         (value) =>
@@ -169,10 +168,7 @@ async function resolveShopCode(req: Request) {
 function parsePromotionId(req: Request) {
   const promotionId = Number(req.params.promotionId ?? req.params.id);
   if (!Number.isFinite(promotionId) || promotionId <= 0) {
-    throw new ApiError(
-      StatusCodes.BAD_REQUEST,
-      "Mã khuyến mãi không hợp lệ"
-    );
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Mã khuyến mãi không hợp lệ");
   }
   return promotionId;
 }
@@ -272,11 +268,7 @@ const shopPromotionController = {
     }
   },
 
-  async updateStatusForMe(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) {
+  async updateStatusForMe(req: Request, res: Response, next: NextFunction) {
     try {
       const shopCode = await resolveShopCode(req);
       const promotionId = parsePromotionId(req);

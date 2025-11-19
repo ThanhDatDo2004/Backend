@@ -198,6 +198,23 @@ const fieldQuantityService = {
   async getTotalCount(fieldCode: number): Promise<number> {
     return await fieldQuantityModel.getCountByFieldCode(fieldCode);
   },
+
+  async getMaxQuantityNumber(fieldCode: number): Promise<number> {
+    return await fieldQuantityModel.getMaxQuantityNumber(fieldCode);
+  },
+
+  async countFutureBookedQuantities(fieldCode: number): Promise<number> {
+    return await fieldQuantityModel.countFutureBookedQuantities(fieldCode);
+  },
+
+  async getRemovableQuantityIds(fieldCode: number, limit: number) {
+    return await fieldQuantityModel.getRemovableQuantityIds(fieldCode, limit);
+  },
+
+  async deleteQuantitiesByIds(quantityIds: number[]) {
+    if (!quantityIds.length) return 0;
+    return await fieldQuantityModel.deleteByIds(quantityIds);
+  },
 };
 
 export default fieldQuantityService;

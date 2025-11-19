@@ -296,6 +296,82 @@ const fieldQuantityModel = {
     if (typeof result === "boolean") return result ? 1 : 0;
     return Number((result as ResultSetHeader)?.affectedRows ?? 0);
   },
+
+  async getMaxQuantityNumber(fieldCode: number) {
+    const query = `
+      SELECT COALESCE(MAX(QuantityNumber), 0) AS max_no
+      FROM Field_Quantity
+      WHERE FieldCode = ?
+    `;
+    const rows = await queryService.execQueryList(query, [fieldCode]);
+    return Number((rows?.[0] as { max_no?: number })?.max_no ?? 0);
+  },
+
+  async countFutureBookedQuantities(fieldCode: number) {
+    const query = `
+      SELECT COUNT(DISTINCT fs.QuantityID) AS cnt
+      FROM Field_Slots fs
+      INNER JOIN Bookings b ON b.BookingCode = fs.BookingCode
+      WHERE fs.FieldCode = ?
+        AND fs.QuantityID IS NOT NULL
+        AND (
+          fs.PlayDate > CURDATE()
+          OR (
+            fs.PlayDate = CURDATE()
+            AND fs.EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i')
+          )
+        )
+        AND b.BookingStatus IN ('pending', 'confirmed')
+    `;
+    const rows = await queryService.execQueryList(query, [fieldCode]);
+    return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0);
+  },
+
+  async getRemovableQuantityIds(fieldCode: number, limit: number) {
+    if (limit <= 0) return [];
+    const query = `
+      SELECT fq.QuantityID AS quantity_id
+      FROM Field_Quantity fq
+      LEFT JOIN (
+        SELECT DISTINCT fs.QuantityID
+        FROM Field_Slots fs
+        INNER JOIN Bookings b ON b.BookingCode = fs.BookingCode
+        WHERE fs.FieldCode = ?
+          AND fs.QuantityID IS NOT NULL
+          AND (
+            fs.PlayDate > CURDATE()
+            OR (
+              fs.PlayDate = CURDATE()
+              AND fs.EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i')
+            )
+          )
+          AND b.BookingStatus IN ('pending', 'confirmed')
+      ) busy ON busy.QuantityID = fq.QuantityID
+      WHERE fq.FieldCode = ? AND busy.QuantityID IS NULL
+      ORDER BY fq.QuantityNumber DESC
+      LIMIT ?
+    `;
+    const rows = await queryService.execQueryList(query, [
+      fieldCode,
+      fieldCode,
+      limit,
+    ]);
+    return rows.map(
+      (row: { quantity_id: number }) => Number(row.quantity_id ?? 0)
+    );
+  },
+
+  async deleteByIds(quantityIds: number[]) {
+    if (!quantityIds.length) return 0;
+    const placeholders = quantityIds.map(() => "?").join(", ");
+    const query = `
+      DELETE FROM Field_Quantity
+      WHERE QuantityID IN (${placeholders})
+    `;
+    const result = await queryService.execQuery(query, quantityIds);
+    if (typeof result === "boolean") return result ? quantityIds.length : 0;
+    return Number((result as ResultSetHeader)?.affectedRows ?? 0);
+  },
 };
 
 export default fieldQuantityModel;

@@ -309,7 +309,10 @@ const shopPromotionModel = {
    */
   async checkUsage(promotionId: number): Promise<number> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM Bookings WHERE PromotionID = ?`,
+      `SELECT COUNT(*) AS cnt
+       FROM Bookings
+       WHERE PromotionID = ?
+         AND BookingStatus IN ('pending','confirmed')`,
       [promotionId]
     );
 

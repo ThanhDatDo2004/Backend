@@ -397,21 +397,19 @@ const fieldModel = {
   },
 
   async hasFutureBookings(fieldCode: number) {
-    // Check if field has ANY FUTURE BOOKINGS (FUTURE = bookings that haven't finished yet)
-    // Future = PlayDate > today OR (PlayDate = today AND EndTime > current_time)
-    // Only counts 'booked' or 'held' slots (not cancelled/completed)
-    //
-    // If this returns true → BLOCK field deletion (409 Conflict)
-    // If this returns false → CAN DELETE field (including all past bookings)
     const query = `
-      SELECT COUNT(*) AS cnt
-      FROM Field_Slots
-      WHERE FieldCode = ?
+      SELECT COUNT(DISTINCT bs.BookingCode) AS cnt
+      FROM Booking_Slots bs
+      INNER JOIN Bookings b ON b.BookingCode = bs.BookingCode
+      WHERE bs.FieldCode = ?
         AND (
-          (PlayDate > CURDATE()) OR
-          (PlayDate = CURDATE() AND EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i'))
+          bs.PlayDate > CURDATE()
+          OR (
+            bs.PlayDate = CURDATE()
+            AND bs.EndTime > DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+07:00'), '%H:%i')
+          )
         )
-        AND Status IN ('booked', 'held')
+        AND b.BookingStatus IN ('pending', 'confirmed')
     `;
     const rows = await queryService.execQueryList(query, [fieldCode]);
     return Number((rows?.[0] as { cnt?: number })?.cnt ?? 0) > 0;
