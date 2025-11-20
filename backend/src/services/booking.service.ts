@@ -561,71 +561,66 @@ export async function confirmFieldBooking(
   const transactionResult = await queryService.execTransaction<{
     slots: ConfirmBookingResult["slots"];
     holdExpiresAt: Date;
-  }>(
-    "confirmFieldBooking",
-    async (connection) => {
-      // 1. Xử lý slots (lock, update, insert)
-      const updatedSlots: ConfirmBookingResult["slots"] = [];
+  }>("confirmFieldBooking", async (connection) => {
+    // 1. Xử lý slots (lock, update, insert)
+    const updatedSlots: ConfirmBookingResult["slots"] = [];
 
-      for (let index = 0; index < normalizedSlots.length; index += 1) {
-        const slot = normalizedSlots[index];
-        const row = await lockSlot(
+    for (let index = 0; index < normalizedSlots.length; index += 1) {
+      const slot = normalizedSlots[index];
+      const row = await lockSlot(
+        connection,
+        fieldCode,
+        slot,
+        quantityId ?? null
+      );
+
+      if (row) {
+        await updateExistingSlot(connection, row, slot, quantityId ?? null);
+        const resolvedQuantityId =
+          row.QuantityID !== null && row.QuantityID !== undefined
+            ? Number(row.QuantityID)
+            : quantityId ?? null;
+        updatedSlots.push({
+          slot_id: Number(row.SlotID),
+          play_date: slot.play_date,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          quantity_id: resolvedQuantityId,
+        });
+      } else {
+        const insertedId = await insertNewSlot(
           connection,
           fieldCode,
           slot,
-          quantityId ?? null
+          quantityId ?? null,
+          payload.created_by ?? null
         );
-
-        if (row) {
-          await updateExistingSlot(connection, row, slot, quantityId ?? null);
-          const resolvedQuantityId =
-            row.QuantityID !== null && row.QuantityID !== undefined
-              ? Number(row.QuantityID)
-              : quantityId ?? null;
-          updatedSlots.push({
-            slot_id: Number(row.SlotID),
-            play_date: slot.play_date,
-            start_time: slot.start_time,
-            end_time: slot.end_time,
-            quantity_id: resolvedQuantityId,
-          });
-        } else {
-          const insertedId = await insertNewSlot(
-            connection,
-            fieldCode,
-            slot,
-            quantityId ?? null,
-            payload.created_by ?? null
-          );
-          updatedSlots.push({
-            slot_id: insertedId,
-            play_date: slot.play_date,
-            start_time: slot.start_time,
-            end_time: slot.end_time,
-            quantity_id: quantityId ?? null,
-          });
-        }
+        updatedSlots.push({
+          slot_id: insertedId,
+          play_date: slot.play_date,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          quantity_id: quantityId ?? null,
+        });
       }
+    }
 
-      if (!updatedSlots.length) {
-        throw new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          "Không thể ghi nhận khung giờ đã chọn."
-        );
-      }
+    if (!updatedSlots.length) {
+      throw new ApiError(500, "Không thể ghi nhận khung giờ đã chọn.");
+    }
 
-      // 2. Tạo booking thực vào DB - CHỈ lưu thông tin chung (không lưu time)
-      const bookingUserId = Number(payload.created_by);
-      if (!Number.isFinite(bookingUserId) || bookingUserId <= 0) {
-        throw new ApiError(
-          StatusCodes.BAD_REQUEST,
-          "Người tạo booking không hợp lệ."
-        );
-      }
-      const checkinCode = generateCheckinCode();
+    // 2. Tạo booking thực vào DB - CHỈ lưu thông tin chung (không lưu time)
+    const bookingUserId = Number(payload.created_by);
+    if (!Number.isFinite(bookingUserId) || bookingUserId <= 0) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Người tạo booking không hợp lệ."
+      );
+    }
+    const checkinCode = generateCheckinCode();
 
-      const [bookingResult] = await connection.query<ResultSetHeader>(
-        `INSERT INTO Bookings (
+    const [bookingResult] = await connection.query<ResultSetHeader>(
+      `INSERT INTO Bookings (
           FieldCode,
           QuantityID,
           CustomerUserID,
@@ -644,32 +639,32 @@ export async function confirmFieldBooking(
           CreateAt,
           UpdateAt
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
-        [
-          fieldCode,
-          quantityId ?? null,
-          bookingUserId,
-          payload.customer?.name || null,
-          payload.customer?.email || null,
-          payload.customer?.phone || null,
-          finalTotalPrice,
-          platformFee,
-          netToShop,
-          discountAmount,
-          appliedPromotion?.promotion_id ?? null,
-          appliedPromotion?.promotion_code ?? null,
-          checkinCode,
-        ]
-      );
+      [
+        fieldCode,
+        quantityId ?? null,
+        bookingUserId,
+        payload.customer?.name || null,
+        payload.customer?.email || null,
+        payload.customer?.phone || null,
+        finalTotalPrice,
+        platformFee,
+        netToShop,
+        discountAmount,
+        appliedPromotion?.promotion_id ?? null,
+        appliedPromotion?.promotion_code ?? null,
+        checkinCode,
+      ]
+    );
 
-      bookingCode = (bookingResult as any).insertId;
+    bookingCode = (bookingResult as any).insertId;
 
-      // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
-      const holdExpiryTime = createHoldExpiryDeadline();
-      for (let index = 0; index < normalizedSlots.length; index += 1) {
-        const slot = normalizedSlots[index];
-        // Insert vào Booking_Slots
-        await connection.query<ResultSetHeader>(
-          `INSERT INTO Booking_Slots (
+    // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
+    const holdExpiryTime = createHoldExpiryDeadline();
+    for (let index = 0; index < normalizedSlots.length; index += 1) {
+      const slot = normalizedSlots[index];
+      // Insert vào Booking_Slots
+      await connection.query<ResultSetHeader>(
+        `INSERT INTO Booking_Slots (
             BookingCode,
             FieldCode,
             QuantityID,
@@ -681,21 +676,21 @@ export async function confirmFieldBooking(
             CreateAt,
             UpdateAt
           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-          [
-            bookingCode,
-            fieldCode,
-            quantityId ?? null,
-            slot.db_date,
-            slot.db_start_time,
-            slot.db_end_time,
-            slotPrices[index] ?? basePricePerSlot,
-          ]
-        );
+        [
+          bookingCode,
+          fieldCode,
+          quantityId ?? null,
+          slot.db_date,
+          slot.db_start_time,
+          slot.db_end_time,
+          slotPrices[index] ?? basePricePerSlot,
+        ]
+      );
 
-        // Update Field_Slots (để track sân - giữ nguyên)
-        if (quantityId !== null && quantityId !== undefined) {
-          const [updateResult] = await connection.query<ResultSetHeader>(
-            `UPDATE Field_Slots 
+      // Update Field_Slots (để track sân - giữ nguyên)
+      if (quantityId !== null && quantityId !== undefined) {
+        const [updateResult] = await connection.query<ResultSetHeader>(
+          `UPDATE Field_Slots 
              SET Status = 'held',
                  BookingCode = ?,
                  HoldExpiresAt = ?,
@@ -706,21 +701,21 @@ export async function confirmFieldBooking(
                AND StartTime = ?
                AND EndTime = ?
                AND (QuantityID = ? OR QuantityID IS NULL)`,
-            [
-              bookingCode,
-              holdExpiryTime,
-              quantityId,
-              fieldCode,
-              slot.db_date,
-              slot.db_start_time,
-              slot.db_end_time,
-              quantityId,
-            ]
-          );
+          [
+            bookingCode,
+            holdExpiryTime,
+            quantityId,
+            fieldCode,
+            slot.db_date,
+            slot.db_start_time,
+            slot.db_end_time,
+            quantityId,
+          ]
+        );
 
-          if ((updateResult?.affectedRows ?? 0) === 0) {
-            await connection.query<ResultSetHeader>(
-              `INSERT INTO Field_Slots (
+        if ((updateResult?.affectedRows ?? 0) === 0) {
+          await connection.query<ResultSetHeader>(
+            `INSERT INTO Field_Slots (
                  FieldCode,
                  QuantityID,
                  PlayDate,
@@ -740,36 +735,36 @@ export async function confirmFieldBooking(
                  HoldExpiresAt = VALUES(HoldExpiresAt),
                  QuantityID = IFNULL(VALUES(QuantityID), QuantityID),
                  UpdateAt = NOW()`,
-              [
-                fieldCode,
-                quantityId,
-                slot.db_date,
-                slot.db_start_time,
-                slot.db_end_time,
-                bookingCode,
-                holdExpiryTime,
-                payload.created_by ?? null,
-              ]
-            );
-          }
-        } else {
-          const [updateResult] = await connection.query<ResultSetHeader>(
-            `UPDATE Field_Slots 
-             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
-             WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
             [
-              bookingCode,
-              holdExpiryTime,
               fieldCode,
+              quantityId,
               slot.db_date,
               slot.db_start_time,
               slot.db_end_time,
+              bookingCode,
+              holdExpiryTime,
+              payload.created_by ?? null,
             ]
           );
+        }
+      } else {
+        const [updateResult] = await connection.query<ResultSetHeader>(
+          `UPDATE Field_Slots 
+             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
+             WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
+          [
+            bookingCode,
+            holdExpiryTime,
+            fieldCode,
+            slot.db_date,
+            slot.db_start_time,
+            slot.db_end_time,
+          ]
+        );
 
-          if ((updateResult?.affectedRows ?? 0) === 0) {
-            await connection.query<ResultSetHeader>(
-              `INSERT INTO Field_Slots (
+        if ((updateResult?.affectedRows ?? 0) === 0) {
+          await connection.query<ResultSetHeader>(
+            `INSERT INTO Field_Slots (
                  FieldCode,
                  QuantityID,
                  PlayDate,
@@ -788,37 +783,36 @@ export async function confirmFieldBooking(
                  BookingCode = VALUES(BookingCode),
                  HoldExpiresAt = VALUES(HoldExpiresAt),
                  UpdateAt = NOW()`,
-              [
-                fieldCode,
-                slot.db_date,
-                slot.db_start_time,
-                slot.db_end_time,
-                bookingCode,
-                holdExpiryTime,
-                payload.created_by ?? null,
-              ]
-            );
-          }
+            [
+              fieldCode,
+              slot.db_date,
+              slot.db_start_time,
+              slot.db_end_time,
+              bookingCode,
+              holdExpiryTime,
+              payload.created_by ?? null,
+            ]
+          );
         }
       }
-
-      const shouldPersistCart =
-        payload.isLoggedInCustomer === true &&
-        Number.isFinite(bookingUserId) &&
-        bookingUserId > 0;
-
-      if (shouldPersistCart) {
-        await cartService.persistEntry(
-          connection,
-          bookingUserId,
-          bookingCode,
-          holdExpiryTime
-        );
-      }
-
-      return { slots: updatedSlots, holdExpiresAt: holdExpiryTime };
     }
-  );
+
+    const shouldPersistCart =
+      payload.isLoggedInCustomer === true &&
+      Number.isFinite(bookingUserId) &&
+      bookingUserId > 0;
+
+    if (shouldPersistCart) {
+      await cartService.persistEntry(
+        connection,
+        bookingUserId,
+        bookingCode,
+        holdExpiryTime
+      );
+    }
+
+    return { slots: updatedSlots, holdExpiresAt: holdExpiryTime };
+  });
 
   // Return INT booking code thực từ DB
   const transactionId = generateTransactionId();
@@ -920,7 +914,10 @@ export async function listCustomerBookings(
     };
   });
 
-  const total = await bookingModel.countCustomerBookings(userId, options.status);
+  const total = await bookingModel.countCustomerBookings(
+    userId,
+    options.status
+  );
 
   return {
     data,
@@ -1013,10 +1010,12 @@ export async function listShopBookingsForOwner(
 
   const total = await bookingModel.countShopBookings(shopCode, filters);
 
-  const bookingSummaryRows =
-    await bookingModel.getShopBookingStatusSummary(shopCode);
-  const paymentSummaryRows =
-    await bookingModel.getShopPaymentStatusSummary(shopCode);
+  const bookingSummaryRows = await bookingModel.getShopBookingStatusSummary(
+    shopCode
+  );
+  const paymentSummaryRows = await bookingModel.getShopPaymentStatusSummary(
+    shopCode
+  );
 
   const bookingSummary: Record<string, number> = {
     pending: 0,
@@ -1134,8 +1133,7 @@ export async function cancelCustomerBooking(
   await cartService.removeEntriesForBookings([bookingCode]);
 
   if (booking.PaymentStatus === "paid") {
-    const refundReason =
-      reason || "Customer requested cancellation";
+    const refundReason = reason || "Customer requested cancellation";
     await bookingModel.insertBookingRefund(
       bookingCode,
       Number(booking.TotalPrice || 0),

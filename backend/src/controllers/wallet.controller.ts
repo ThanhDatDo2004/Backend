@@ -26,10 +26,7 @@ const walletController = {
       return apiResponse.success(res, stats, "Thông tin ví", StatusCodes.OK);
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy thông tin ví"
-        )
+        new ApiError(500, (error as Error)?.message || "Lỗi lấy thông tin ví")
       );
     }
   },
@@ -79,7 +76,7 @@ const walletController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy lịch sử giao dịch"
         )
       );
@@ -103,12 +100,7 @@ const walletController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy ví shop"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message || "Lỗi lấy ví shop"));
     }
   },
 
@@ -154,12 +146,7 @@ const walletController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy lịch sử"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message || "Lỗi lấy lịch sử"));
     }
   },
 };

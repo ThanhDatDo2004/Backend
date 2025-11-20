@@ -13,7 +13,10 @@ const cartController = {
         String((req as any).user?.role || "").toLowerCase() === "guest";
       if (!Number.isFinite(userId) || userId <= 0) {
         return next(
-          new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập để xem giỏ hàng")
+          new ApiError(
+            StatusCodes.UNAUTHORIZED,
+            "Yêu cầu đăng nhập để xem giỏ hàng"
+          )
         );
       }
 
@@ -36,10 +39,7 @@ const cartController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Không thể lấy giỏ hàng"
-        )
+        new ApiError(500, (error as Error)?.message || "Không thể lấy giỏ hàng")
       );
     }
   },

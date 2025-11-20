@@ -14,7 +14,7 @@ import {
 } from "../services/mail.service";
 
 const otpStore = new Map<string, { code: string; expiresAt: number }>();
-const OTP_TTL_MS = 15 * 60 * 1000; 
+const OTP_TTL_MS = 15 * 60 * 1000;
 
 function genOTP(len = 6) {
   return Math.floor(Math.random() * 10 ** len)
@@ -30,37 +30,13 @@ const authController = {
       try {
         user = await authModel.getUserAuth(login);
       } catch (dbError) {
-        return next(
-          new ApiError(
-            StatusCodes.SERVICE_UNAVAILABLE,
-            (dbError as Error).message || "Kết nối server thất bại"
-          )
-        );
+        next();
       }
-
       if (!user) {
-        return next(
-          new ApiError(StatusCodes.UNAUTHORIZED, "Email không tồn tại")
-        );
+        return next(new ApiError(401, "Email không tồn tại"));
       }
-
-      const { PasswordHash, IsActive, _destroy, LevelType, ...dataUser } = user as {
-        PasswordHash: string;
-        IsActive?: number;
-        _destroy?: number;
-        LevelType?: string | null;
-      };
-
-      if (Number(_destroy ?? 0) === 1) {
-        return next(
-          new ApiError(
-            StatusCodes.LOCKED,
-            "Tài khoản đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên."
-          )
-        );
-      }
-
-      if (!Number(IsActive ?? 0)) {
+      const { PasswordHash, IsActive, _destroy, LevelType, ...dataUser } = user;
+      if (!(IsActive ?? 0)) {
         return next(
           new ApiError(
             StatusCodes.LOCKED,
@@ -68,69 +44,41 @@ const authController = {
           )
         );
       }
-
       const isMatch = await authService.verifyPassword(password, PasswordHash);
       if (!isMatch) {
-        return next(
-          new ApiError(
-            StatusCodes.UNAUTHORIZED,
-            "Email hoặc mật khẩu không đúng"
-          )
-        );
+        return next(new ApiError(401, "Email hoặc mật khẩu không đúng"));
       }
-      const userId = Number(user?.UserID ?? 0);
-      const levelCode = Number(user?.LevelCode);
-      const normalizedLevelType = String(LevelType ?? "").toLowerCase();
-      const derivedRole =
-        normalizedLevelType === "admin"
-          ? "admin"
-          : normalizedLevelType === "shop"
-          ? "shop"
-          : "user";
-
-      const normalizedUser = {
+      const userToken = {
         ...dataUser,
-        UserID: userId,
-        LevelCode: levelCode,
         IsActive,
         LevelType,
-        role: derivedRole,
+        role: LevelType,
         isGuest: false,
       };
 
-      const token = await authService.generateAccessToken(normalizedUser);
-      const refreshToken = await authService.generateRefreshToken(
-        normalizedUser
-      );
+      const token = await authService.generateAccessToken(userToken);
+      const refreshToken = await authService.generateRefreshToken(userToken);
 
       return apiResponse.success(
         res,
-        { ...normalizedUser, token, refreshToken },
+        { ...userToken, token, refreshToken },
         "Login Success",
-        StatusCodes.OK
+        200
       );
     } catch (error: any) {
-      next(
-        new ApiError(StatusCodes.UNAUTHORIZED, error?.message || "Login Error")
-      );
+      next(new ApiError(401, error?.message));
     }
   },
 
   async guestToken(_req: Request, res: Response, next: NextFunction) {
     try {
-      const guestId = Number(process.env.GUEST_CUSTOMER_USER_ID ?? 0);
-      if (!Number.isFinite(guestId) || guestId <= 0) {
-        return next(
-          new ApiError(
-            StatusCodes.INTERNAL_SERVER_ERROR,
-            "Guest user id is not configured"
-          )
-        );
+      const guestId = Number(process.env.GUEST_CUSTOMER_USER_ID ?? 1);
+      if (!Number(guestId) || guestId <= 0) {
+        return next(new ApiError(500, "Guest user ID không hợp lệ"));
       }
 
       const payload = {
         UserID: guestId,
-        user_code: guestId,
         role: "guest",
         isGuest: true,
       };
@@ -143,16 +91,17 @@ const authController = {
           token,
           user: payload,
         },
-        "Guest access granted",
+        "Tạo guest token thành công",
         StatusCodes.OK
       );
-    } catch (error) {
+    } catch (error: any) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Không thể tạo guest token"
+          500,
+          (error?.message) || "Không thể tạo guest token"
         )
       );
+      
     }
   },
 

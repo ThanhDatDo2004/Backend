@@ -284,7 +284,7 @@ const fieldController = {
       }
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể lấy tiện ích của sân"
         )
       );
@@ -305,18 +305,10 @@ const fieldController = {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại"));
       }
 
-      return apiResponse.success(
-        res,
-        stats,
-        "Thống kê sân",
-        StatusCodes.OK
-      );
+      return apiResponse.success(res, stats, "Thống kê sân", StatusCodes.OK);
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Get field stats failed"
-        )
+        new ApiError(500, (error as Error)?.message || "Get field stats failed")
       );
     }
   },
@@ -354,10 +346,7 @@ const fieldController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "List fields failed"
-        )
+        new ApiError(500, (error as Error)?.message || "List fields failed")
       );
     }
   },
@@ -381,10 +370,7 @@ const fieldController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Sync field rent failed"
-        )
+        new ApiError(500, (error as Error)?.message || "Sync field rent failed")
       );
     }
   },
@@ -406,7 +392,7 @@ const fieldController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Sync all fields rent failed"
         )
       );

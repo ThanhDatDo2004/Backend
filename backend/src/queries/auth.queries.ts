@@ -1,6 +1,5 @@
 // src/queries/auth.queries.ts
 const authQueries = {
-  // Lấy thông tin đăng nhập (Users: PascalCase)
   getUserAuth: `
     SELECT 
       u.UserID,

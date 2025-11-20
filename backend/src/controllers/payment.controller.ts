@@ -172,12 +172,9 @@ const paymentController = {
           paymentMethod: payment_method,
           bankAccount: {
             bankName:
-              process.env.SEPAY_BANK_NAME ||
-              process.env.SEPAY_BANK ||
-              "BIDV",
+              process.env.SEPAY_BANK_NAME || process.env.SEPAY_BANK || "BIDV",
             accountNumber: process.env.SEPAY_ACC || "96247THUERE",
-            accountHolder:
-              process.env.SEPAY_ACC_HOLDER || "ThueRe Platform",
+            accountHolder: process.env.SEPAY_ACC_HOLDER || "ThueRe Platform",
           },
         },
         "Khởi tạo thanh toán thành công",
@@ -186,7 +183,7 @@ const paymentController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể khởi tạo thanh toán"
         )
       );
@@ -217,8 +214,9 @@ const paymentController = {
         );
       }
 
-      const bookingInfo =
-        await paymentService.getBookingOwnershipInfo(searchBookingCode);
+      const bookingInfo = await paymentService.getBookingOwnershipInfo(
+        searchBookingCode
+      );
       if (!bookingInfo) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
@@ -264,7 +262,7 @@ const paymentController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể lấy trạng thái thanh toán"
         )
       );
@@ -295,8 +293,9 @@ const paymentController = {
         );
       }
 
-      const bookingInfo =
-        await paymentService.getBookingOwnershipInfo(searchBookingCode);
+      const bookingInfo = await paymentService.getBookingOwnershipInfo(
+        searchBookingCode
+      );
       if (!bookingInfo) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
@@ -305,7 +304,9 @@ const paymentController = {
       ensureBookingAccess(req, bookingInfo);
 
       // Get payment
-      const payment = await paymentService.getPaymentByBookingCode(searchBookingCode as any);
+      const payment = await paymentService.getPaymentByBookingCode(
+        searchBookingCode as any
+      );
       if (!payment) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
@@ -320,7 +321,7 @@ const paymentController = {
             paymentID: payment.PaymentID,
             bookingCode: searchBookingCode,
             status: "paid",
-            message: "Thanh toán đã được xác nhận"
+            message: "Thanh toán đã được xác nhận",
           },
           "Thanh toán đã hoàn tất",
           StatusCodes.OK
@@ -341,7 +342,7 @@ const paymentController = {
             paymentID: payment.PaymentID,
             bookingCode: searchBookingCode,
             status: "paid",
-            message: "Thanh toán đã được xác nhận từ SePay"
+            message: "Thanh toán đã được xác nhận từ SePay",
           },
           "Thanh toán thành công",
           StatusCodes.OK
@@ -355,7 +356,8 @@ const paymentController = {
           paymentID: payment.PaymentID,
           bookingCode: searchBookingCode,
           status: "pending",
-          message: "Vui lòng quét mã QR để chuyển tiền. Hệ thống sẽ tự động cập nhật khi nhận được tiền."
+          message:
+            "Vui lòng quét mã QR để chuyển tiền. Hệ thống sẽ tự động cập nhật khi nhận được tiền.",
         },
         "Chờ xác nhận thanh toán",
         StatusCodes.OK
@@ -363,7 +365,7 @@ const paymentController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể kiểm tra thanh toán"
         )
       );
@@ -626,7 +628,7 @@ const paymentController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy kết quả thanh toán"
         )
       );

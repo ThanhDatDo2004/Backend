@@ -75,10 +75,7 @@ const shopController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Không thể gửi yêu cầu"
-        )
+        new ApiError(500, (error as Error)?.message || "Không thể gửi yêu cầu")
       );
     }
   },
@@ -233,7 +230,7 @@ const shopController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy danh sách tài khoản ngân hàng"
         )
       );
@@ -251,9 +248,7 @@ const shopController = {
 
       const shop = await shopService.getByCode(shopCode);
       if (!shop) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
-        );
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop"));
       }
 
       return apiResponse.success(
@@ -265,7 +260,7 @@ const shopController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể lấy danh sách tiện ích"
         )
       );
@@ -295,9 +290,7 @@ const shopController = {
 
       const shop = await shopService.getByCode(shopCode);
       if (!shop) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop")
-        );
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop"));
       }
 
       if (Number(shop.user_id ?? shop.UserID) !== userId) {
@@ -310,7 +303,9 @@ const shopController = {
       }
 
       const utilitiesInput = Array.isArray((req.body as any)?.utilities)
-        ? (req.body as any).utilities.map((item: unknown) => String(item ?? "").trim())
+        ? (req.body as any).utilities.map((item: unknown) =>
+            String(item ?? "").trim()
+          )
         : [];
 
       return apiResponse.success(
@@ -322,7 +317,7 @@ const shopController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Không thể cập nhật tiện ích"
         )
       );

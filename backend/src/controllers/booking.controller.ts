@@ -100,7 +100,7 @@ const bookingController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy danh sách booking"
         )
       );
@@ -266,10 +266,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Không thể tạo booking"
-        )
+        new ApiError(500, (error as Error)?.message || "Không thể tạo booking")
       );
     }
   },
@@ -313,7 +310,7 @@ const bookingController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy chi tiết booking"
         )
       );
@@ -356,12 +353,7 @@ const bookingController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi hủy booking"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message || "Lỗi hủy booking"));
     }
   },
 
@@ -402,10 +394,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi cập nhật booking"
-        )
+        new ApiError(500, (error as Error)?.message || "Lỗi cập nhật booking")
       );
     }
   },
@@ -445,10 +434,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi verify check-in"
-        )
+        new ApiError(500, (error as Error)?.message || "Lỗi verify check-in")
       );
     }
   },
@@ -476,10 +462,7 @@ const bookingController = {
       return apiResponse.success(res, result, "Mã check-in", StatusCodes.OK);
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Lỗi lấy mã check-in"
-        )
+        new ApiError(500, (error as Error)?.message || "Lỗi lấy mã check-in")
       );
     }
   },
@@ -522,7 +505,7 @@ const bookingController = {
     } catch (error) {
       next(
         new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
+          500,
           (error as Error)?.message || "Lỗi lấy danh sách booking"
         )
       );
@@ -555,10 +538,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Confirm booking failed"
-        )
+        new ApiError(500, (error as Error)?.message || "Confirm booking failed")
       );
     }
   },
@@ -591,10 +571,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(
-          StatusCodes.INTERNAL_SERVER_ERROR,
-          (error as Error)?.message || "Cancel booking failed"
-        )
+        new ApiError(500, (error as Error)?.message || "Cancel booking failed")
       );
     }
   },
