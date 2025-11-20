@@ -34,31 +34,7 @@ const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
   return 1;
 })();
 
-// const resolveBookingUser = (
-//   req: Request
-// ): { userId?: number; isLoggedInCustomer: boolean; isGuest: boolean } => {
-//   const authPayload = req.user ?? {};
-//   const authUserId = toNumber(authPayload.UserID);
-//   const role = authPayload.role;
-//   const isGuest = role === "guest" || authUserId === DEFAULT_GUEST_CUSTOMER_USER_ID;
-//   if (authUserId && authUserId > 0) {
-//     return {
-//       userId: authUserId,
-//       isLoggedInCustomer: !isGuest,
-//       isGuest,
-//     };
-//   }
 
-//   if (DEFAULT_GUEST_CUSTOMER_USER_ID) {
-//     return {
-//       userId: DEFAULT_GUEST_CUSTOMER_USER_ID,
-//       isLoggedInCustomer: false,
-//       isGuest: true,
-//     };
-//   }
-
-//   return { userId: undefined, isLoggedInCustomer: false, isGuest: false };
-// };
 const resolveBookingUser = (req: Request) => {
   const { UserID, role } = req.user ?? {};
   const userId = toNumber(UserID);
