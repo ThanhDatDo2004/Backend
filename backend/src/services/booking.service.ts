@@ -410,6 +410,13 @@ export async function confirmFieldBooking(
 
   if (promotionCode) {
     const promotion = await shopPromotionService.getByCode(promotionCode);
+    if (promotion.is_deleted) {
+      throw new ApiError(
+        StatusCodes.GONE,
+        "Khuyến mãi này không còn khả dụng."
+      );
+    }
+
     if (Number(promotion.shop_code) !== shopCode) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,

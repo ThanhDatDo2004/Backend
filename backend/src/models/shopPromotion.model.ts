@@ -18,6 +18,7 @@ export type ShopPromotionRow = {
   StartAt: string;
   EndAt: string;
   Status: string;
+  IsDeleted: number;
   CreateAt: string;
   UpdateAt: string;
   UsageCount?: number;
@@ -41,7 +42,7 @@ const shopPromotionModel = {
            AND PromotionID IS NOT NULL
          GROUP BY PromotionID
        ) b ON b.PromotionID = p.PromotionID
-       WHERE p.ShopCode = ?
+       WHERE p.ShopCode = ? AND p.IsDeleted = 0
        ORDER BY p.CreateAt DESC`,
       [shopCode]
     );
@@ -66,7 +67,7 @@ const shopPromotionModel = {
          WHERE PromotionID = ? AND BookingStatus IN ('pending','confirmed','completed')
          GROUP BY PromotionID
        ) b ON b.PromotionID = p.PromotionID
-       WHERE p.ShopCode = ? AND p.PromotionID = ?
+       WHERE p.ShopCode = ? AND p.PromotionID = ? AND p.IsDeleted = 0
        LIMIT 1`,
       [promotionId, shopCode, promotionId]
     );
@@ -193,7 +194,7 @@ const shopPromotionModel = {
            EndAt = ?,
            Status = ?,
            UpdateAt = NOW()
-       WHERE ShopCode = ? AND PromotionID = ?`,
+       WHERE ShopCode = ? AND PromotionID = ? AND IsDeleted = 0`,
       [
         payload.promotion_code,
         payload.title,
@@ -224,7 +225,7 @@ const shopPromotionModel = {
     await queryService.execQuery(
       `UPDATE Shop_Promotions
        SET Status = ?, UpdateAt = NOW()
-       WHERE ShopCode = ? AND PromotionID = ?`,
+       WHERE ShopCode = ? AND PromotionID = ? AND IsDeleted = 0`,
       [status, shopCode, promotionId]
     );
   },
@@ -272,6 +273,7 @@ const shopPromotionModel = {
          AND p.Status NOT IN ('draft','disabled')
          AND p.StartAt <= NOW()
          AND p.EndAt >= NOW()
+         AND p.IsDeleted = 0
        ORDER BY p.EndAt ASC`,
       params
     );
@@ -296,7 +298,7 @@ const shopPromotionModel = {
            AND PromotionID IS NOT NULL
          GROUP BY PromotionID
        ) b ON b.PromotionID = p.PromotionID
-       WHERE p.PromotionCode = ?
+       WHERE p.PromotionCode = ? AND p.IsDeleted = 0
        LIMIT 1`,
       [normalized]
     );
@@ -305,26 +307,32 @@ const shopPromotionModel = {
   },
 
   /**
-   * Check promotion usage
+   * Check if promotion is referenced by unpaid/pending bookings
    */
-  async checkUsage(promotionId: number): Promise<number> {
+  async hasPendingUnpaidBookings(promotionId: number): Promise<boolean> {
     const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt
+      `SELECT COUNT(*) AS Cnt
        FROM Bookings
        WHERE PromotionID = ?
-         AND BookingStatus IN ('pending','confirmed')`,
+         AND PaymentStatus <> 'paid'
+         AND BookingStatus NOT IN ('cancelled')`,
       [promotionId]
     );
 
-    return Number(rows?.[0]?.cnt ?? 0);
+    return Number(rows?.[0]?.Cnt ?? 0) > 0;
   },
 
   /**
-   * Delete promotion
+   * Soft delete promotion
    */
-  async delete(shopCode: number, promotionId: number): Promise<boolean> {
+  async softDelete(shopCode: number, promotionId: number): Promise<boolean> {
     const [result] = await queryService.query<ResultSetHeader>(
-      `DELETE FROM Shop_Promotions WHERE ShopCode = ? AND PromotionID = ? LIMIT 1`,
+      `UPDATE Shop_Promotions
+       SET Status = 'disabled',
+           IsDeleted = 1,
+           DeletedAt = NOW(),
+           UpdateAt = NOW()
+       WHERE ShopCode = ? AND PromotionID = ? AND IsDeleted = 0`,
       [shopCode, promotionId]
     );
 

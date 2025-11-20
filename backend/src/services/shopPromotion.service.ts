@@ -27,6 +27,7 @@ export interface ShopPromotion {
   status: ShopPromotionStatus;
   current_status: ShopPromotionStatus;
   usage_count: number;
+  is_deleted: boolean;
   create_at: string;
   update_at: string;
 }
@@ -137,6 +138,7 @@ function mapRow(row: any): ShopPromotion {
       row.UsageCount !== null && row.UsageCount !== undefined
         ? Number(row.UsageCount)
         : 0,
+    is_deleted: Boolean(row.IsDeleted),
     create_at: toIsoString(row.CreateAt ?? startAt),
     update_at: toIsoString(row.UpdateAt ?? startAt),
   };
@@ -381,6 +383,13 @@ const shopPromotionService = {
     }
 
     const mapped = mapRow(record);
+    if (record.IsDeleted) {
+      throw new ApiError(
+        StatusCodes.GONE,
+        "Khuyến mãi này đã bị gỡ khỏi hệ thống."
+      );
+    }
+
     return {
       ...mapped,
       shop_code: Number(record.ShopCode),
@@ -396,15 +405,26 @@ const shopPromotionService = {
       );
     }
 
-    const totalUsage = await shopPromotionModel.checkUsage(promotionId);
-    if (totalUsage > 0) {
+    const promotion = mapRow(record);
+    const now = Date.now();
+    const endedAt = new Date(promotion.end_at).getTime();
+    if (Number.isNaN(endedAt) || endedAt > now) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        "Không thể xóa khuyến mãi đã liên kết với các đơn đặt sân."
+        "Chỉ có thể xóa khuyến mãi sau khi đã hết hạn."
       );
     }
 
-    const deleted = await shopPromotionModel.delete(shopCode, promotionId);
+    const hasPendingUnpaid =
+      await shopPromotionModel.hasPendingUnpaidBookings(promotionId);
+    if (hasPendingUnpaid) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Khuyến mãi đang được sử dụng trong các đơn chưa thanh toán."
+      );
+    }
+
+    const deleted = await shopPromotionModel.softDelete(shopCode, promotionId);
 
     if (!deleted) {
       throw new ApiError(
