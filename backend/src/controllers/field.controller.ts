@@ -3,12 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import fieldService from "../services/field.service";
 import ApiError from "../utils/apiErrors";
-import bookingService, {
-  releaseExpiredHeldSlots,
-} from "../services/booking.service";
-import paymentService from "../services/payment.service";
-import { RowDataPacket } from "mysql2";
-import queryService from "../services/query";
+import { releaseExpiredHeldSlots } from "../services/booking.service";
 import { listFieldUtilities } from "../services/shopUtilities.service";
 
 const toNumber = (value: unknown) => {
@@ -24,32 +19,6 @@ const queryString = (value: unknown): string | undefined => {
   return typeof value === "string" && value.trim() !== ""
     ? value.trim()
     : undefined;
-};
-
-const DEFAULT_GUEST_CUSTOMER_USER_ID = (() => {
-  const raw = Number(process.env.GUEST_CUSTOMER_USER_ID ?? 1);
-  if (Number.isFinite(raw) && raw > 0) {
-    return raw;
-  }
-  return 1;
-})();
-
-
-const resolveBookingUser = (req: Request) => {
-  const { UserID, role } = req.user ?? {};
-  const userId = toNumber(UserID);
-  const isGuest = role === "guest" || userId === DEFAULT_GUEST_CUSTOMER_USER_ID;
-
-  if (userId && userId > 0) {
-    return { userId, isLoggedInCustomer: !isGuest, isGuest };
-  }
-
-  const guestId = DEFAULT_GUEST_CUSTOMER_USER_ID;
-  if (Number(guestId) && guestId > 0) {
-    return { userId: guestId, isLoggedInCustomer: false, isGuest: true };
-  }
-
-  return { isLoggedInCustomer: false, isGuest: false };
 };
 
 const fieldController = {
@@ -322,112 +291,6 @@ const fieldController = {
     }
   },
 
-  async confirmBooking(req: Request, res: Response, next: NextFunction) {
-    try {
-      const fieldCode = Number(req.params.fieldCode);
-      if (!Number.isFinite(fieldCode) || fieldCode <= 0) {
-        return next(
-          new ApiError(StatusCodes.BAD_REQUEST, "Mã sân không hợp lệ")
-        );
-      }
-
-      const {
-        slots,
-        customer,
-        payment_method,
-        total_price,
-        notes,
-        quantity_id,
-        quantityId: quantityIdCamel,
-        promotion_code: promotionCodeSnake,
-        promotionCode: promotionCodeCamel,
-      } = req.body ?? {};
-
-      if (!Array.isArray(slots) || !slots.length) {
-        return next(
-          new ApiError(
-            StatusCodes.BAD_REQUEST,
-            "Vui lòng chọn ít nhất một khung giờ để đặt sân."
-          )
-        );
-      }
-
-      const {
-        userId: resolvedUserId,
-        isLoggedInCustomer,
-        isGuest,
-      } = resolveBookingUser(req);
-
-      if (!resolvedUserId) {
-        return next(
-          new ApiError(
-            StatusCodes.BAD_REQUEST,
-            "Không xác định được người đặt sân hợp lệ."
-          )
-        );
-      }
-
-      const quantityId = toNumber(quantity_id ?? quantityIdCamel ?? undefined);
-
-      const promotionCodeInput = (
-        [promotionCodeSnake, promotionCodeCamel].find(
-          (code) => typeof code === "string" && code.trim()
-        ) as string | undefined
-      )?.trim();
-
-      if (promotionCodeInput && isGuest) {
-        return next(
-          new ApiError(
-            StatusCodes.FORBIDDEN,
-            "Khách vãng lai không được áp dụng mã giảm giá."
-          )
-        );
-      }
-
-      const result = await bookingService.confirmFieldBooking(
-        fieldCode,
-        {
-          slots,
-          customer: typeof customer === "object" ? customer : undefined,
-          payment_method:
-            typeof payment_method === "string" ? payment_method : undefined,
-          total_price:
-            typeof total_price === "number" ? total_price : undefined,
-          notes: typeof notes === "string" ? notes : undefined,
-          created_by: resolvedUserId,
-          promotion_code: promotionCodeInput?.toUpperCase(),
-          isLoggedInCustomer,
-        },
-        quantityId // NEW: Pass quantityId
-      );
-
-      return apiResponse.success(
-        res,
-        {
-          booking_code: result.booking_code,
-          qr_code: result.qr_code,
-          paymentID: result.paymentID,
-          amount: result.amount,
-          amountBeforeDiscount: result.amount_before_discount,
-          discountAmount: result.discount_amount,
-          promotionCode: result.promotion_code,
-          promotionTitle: result.promotion_title,
-          transaction_id: result.transaction_id,
-          payment_status: result.payment_status,
-          payment_method:
-            typeof payment_method === "string"
-              ? payment_method
-              : "bank_transfer",
-          slots: result.slots,
-        },
-        "Tạo booking thành công. Mã QR SePay đã sẵn sàng.",
-        StatusCodes.OK
-      );
-    } catch (error) {
-      next(error);
-    }
-  },
-
   /**
    * Get field statistics including booking count
    * GET /api/fields/:fieldCode/stats
@@ -436,38 +299,15 @@ const fieldController = {
     try {
       const { fieldCode } = req.params;
 
-      const query = `
-        SELECT
-          f.FieldCode,
-          f.FieldName,
-          f.Rent,
-          f.Rent as booking_count,
-          f.Status,
-          f.DefaultPricePerHour,
-          f.SportType,
-          s.ShopName,
-          s.PhoneNumber,
-          (SELECT COUNT(*) FROM Bookings
-           WHERE FieldCode = f.FieldCode
-           AND BookingStatus = 'confirmed') as confirmed_count,
-          (SELECT COUNT(*) FROM Bookings
-           WHERE FieldCode = f.FieldCode) as total_bookings
-        FROM Fields f
-        JOIN Shops s ON f.ShopCode = s.ShopCode
-        WHERE f.FieldCode = ?
-      `;
+      const stats = await fieldService.getFieldStatsByCode(Number(fieldCode));
 
-      const [results] = await queryService.query<RowDataPacket[]>(query, [
-        fieldCode,
-      ]);
-
-      if (!results?.[0]) {
+      if (!stats) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Sân không tồn tại"));
       }
 
       return apiResponse.success(
         res,
-        results[0],
+        stats,
         "Thống kê sân",
         StatusCodes.OK
       );
@@ -493,43 +333,20 @@ const fieldController = {
       const validLimit = Math.min(Math.max(1, Number(limit)), 100);
       const validOffset = Math.max(0, Number(offset));
 
-      const query = `
-        SELECT
-          f.FieldCode,
-          f.FieldName,
-          f.Rent,
-          f.Rent as booking_count,
-          f.Status,
-          f.DefaultPricePerHour,
-          f.SportType,
-          s.ShopName
-        FROM Fields f
-        JOIN Shops s ON f.ShopCode = s.ShopCode
-        WHERE f.ShopCode = ?
-        ORDER BY f.Rent DESC
-        LIMIT ? OFFSET ?
-      `;
-
-      const [fields] = await queryService.query<RowDataPacket[]>(query, [
-        shopCode,
+      const result = await fieldService.listFieldsWithRent(
+        Number(shopCode),
         validLimit,
-        validOffset,
-      ]);
-
-      // Get total count
-      const [totalResult] = await queryService.query<RowDataPacket[]>(
-        `SELECT COUNT(*) as total FROM Fields WHERE ShopCode = ?`,
-        [shopCode]
+        validOffset
       );
 
       return apiResponse.success(
         res,
         {
-          data: fields,
+          data: result.data,
           pagination: {
             limit: validLimit,
             offset: validOffset,
-            total: totalResult?.[0]?.total || 0,
+            total: result.total,
           },
         },
         "Danh sách sân với thống kê",
@@ -554,32 +371,7 @@ const fieldController = {
     try {
       const { fieldCode } = req.params;
 
-      // Calculate actual rent count from confirmed bookings
-      const query = `
-        SELECT COUNT(*) as rent_count
-        FROM Bookings
-        WHERE FieldCode = ?
-          AND BookingStatus = 'confirmed'
-      `;
-
-      const [results] = await queryService.query<RowDataPacket[]>(query, [
-        fieldCode,
-      ]);
-
-      const actualRent = results?.[0]?.rent_count || 0;
-
-      // Update field rent to match actual count
-      const updateQuery = `
-        UPDATE Fields
-        SET Rent = ?
-        WHERE FieldCode = ?
-      `;
-
-      await queryService.query(updateQuery, [actualRent, fieldCode]);
-
-      console.log(
-        `[FIELD] Synced Field ${fieldCode} rent to ${actualRent} confirmed bookings`
-      );
+      const actualRent = await fieldService.syncFieldRent(Number(fieldCode));
 
       return apiResponse.success(
         res,
@@ -603,53 +395,7 @@ const fieldController = {
    */
   async syncAllFieldsRent(req: Request, res: Response, next: NextFunction) {
     try {
-      // Get all fields
-      const getAllFields = `SELECT FieldCode FROM Fields`;
-      const [fields] = await queryService.query<RowDataPacket[]>(
-        getAllFields,
-        []
-      );
-
-      if (!fields || fields.length === 0) {
-        return apiResponse.success(
-          res,
-          { synced: 0 },
-          "No fields to sync",
-          StatusCodes.OK
-        );
-      }
-
-      let syncedCount = 0;
-
-      // Sync each field
-      for (const field of fields) {
-        const fieldCode = field.FieldCode;
-
-        const countQuery = `
-          SELECT COUNT(*) as rent_count
-          FROM Bookings
-          WHERE FieldCode = ?
-            AND BookingStatus = 'confirmed'
-        `;
-
-        const [results] = await queryService.query<RowDataPacket[]>(
-          countQuery,
-          [fieldCode]
-        );
-
-        const actualRent = results?.[0]?.rent_count || 0;
-
-        const updateQuery = `
-          UPDATE Fields
-          SET Rent = ?
-          WHERE FieldCode = ?
-        `;
-
-        await queryService.query(updateQuery, [actualRent, fieldCode]);
-        syncedCount++;
-      }
-
-      console.log(`[FIELD] Synced ${syncedCount} fields rent counts`);
+      const syncedCount = await fieldService.syncAllFieldRents();
 
       return apiResponse.success(
         res,

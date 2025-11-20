@@ -1,19 +1,25 @@
 import express from "express";
 import bookingController from "../controllers/booking.controller";
-import { optionalAuth, requireAuth } from "../middlewares/auth.middleware";
+import { requireAuth } from "../middlewares/auth.middleware";
+import { requireAdmin } from "../middlewares/role.middleware";
 
 const router = express.Router();
 
 // Customer endpoints
 router.get("/", requireAuth, bookingController.listBookings);
-router.post("/create", requireAuth, bookingController.createBooking);
-router.get("/:bookingCode", optionalAuth, bookingController.getBooking);
+router.post("/", requireAuth, bookingController.createBooking);
+router.get("/:bookingCode", requireAuth, bookingController.getBooking);
 router.patch("/:bookingCode/cancel", requireAuth, bookingController.cancelBooking);
-router.get("/:bookingCode/checkin-code", optionalAuth, bookingController.getCheckinCode);
+router.get("/:bookingCode/checkin-code", requireAuth, bookingController.getCheckinCode);
 router.post("/:bookingCode/verify-checkin", requireAuth, bookingController.verifyCheckinCode);
 
 // Admin endpoints
-router.patch("/:bookingCode/status", requireAuth, bookingController.updateBookingStatus);
+router.patch(
+  "/:bookingCode/status",
+  requireAuth,
+  requireAdmin(),
+  bookingController.updateBookingStatus
+);
 
 
 

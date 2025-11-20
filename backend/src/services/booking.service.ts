@@ -9,9 +9,11 @@ import shopPromotionService, {
 import bookingModel, {
   type BookingSlotWithQuantityRow,
   type CustomerBookingRow,
+  type ShopBookingFilters,
 } from "../models/booking.model";
 import paymentModel from "../models/payment.model";
 import cartService from "./cart.service";
+import shopService from "./shop.service";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
@@ -83,6 +85,15 @@ export type ConfirmBookingResult = {
 
 export type CustomerBookingListOptions = {
   status?: string;
+  limit: number;
+  offset: number;
+  sort?: string;
+  order?: "ASC" | "DESC" | string;
+};
+
+export type ShopBookingListOptions = {
+  status?: string;
+  search?: string;
   limit: number;
   offset: number;
   sort?: string;
@@ -921,6 +932,130 @@ export async function listCustomerBookings(
   };
 }
 
+export async function listShopBookingsForOwner(
+  userId: number,
+  options: ShopBookingListOptions
+) {
+  const shop = await shopService.getByUserId(Number(userId));
+  if (!shop?.shop_code) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy shop của bạn");
+  }
+
+  const shopCode = Number(shop.shop_code);
+  await cancelStalePendingBookingsForShop(shopCode);
+
+  const limit = Math.min(Math.max(1, Number(options.limit) || 10), 100);
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const status =
+    typeof options.status === "string" && options.status.trim()
+      ? options.status.trim()
+      : undefined;
+  const search =
+    typeof options.search === "string" && options.search.trim()
+      ? options.search.trim()
+      : undefined;
+  const sortField =
+    typeof options.sort === "string" && options.sort.trim()
+      ? options.sort.trim()
+      : undefined;
+
+  const filters: ShopBookingFilters = {
+    status,
+    search,
+    sortField,
+    sortOrder: options.order === "ASC" ? "ASC" : "DESC",
+    limit,
+    offset,
+  };
+
+  const rows = await bookingModel.listShopBookings(shopCode, filters);
+  const bookingCodes = rows
+    .map((row) => Number(row.BookingCode))
+    .filter((code) => Number.isFinite(code) && code > 0);
+
+  const slotRows = bookingCodes.length
+    ? await bookingModel.listSlotsWithQuantity(bookingCodes)
+    : [];
+
+  const slotMap = new Map<number, BookingSlotWithQuantityRow[]>();
+  slotRows.forEach((slot) => {
+    const code = Number(slot.BookingCode);
+    if (!slotMap.has(code)) {
+      slotMap.set(code, [slot]);
+    } else {
+      slotMap.get(code)!.push(slot);
+    }
+  });
+
+  const data = rows.map((booking) => {
+    const code = Number(booking.BookingCode);
+    const slots = slotMap.get(code) ?? [];
+    const quantityInfo = slots.find((slot) => slot.QuantityNumber != null);
+
+    return {
+      ...booking,
+      CustomerPhone: booking.CustomerPhone || "Chưa cập nhật",
+      CheckinCode: booking.CheckinCode || "-",
+      slots: slots.map((slot) => ({
+        Slot_ID: slot.Slot_ID,
+        QuantityID: slot.QuantityID,
+        QuantityNumber: slot.QuantityNumber,
+        PlayDate: slot.PlayDate,
+        StartTime: slot.StartTime,
+        EndTime: slot.EndTime,
+        PricePerSlot: slot.PricePerSlot,
+        Status: slot.Status,
+      })),
+      quantityId: quantityInfo?.QuantityID ?? null,
+      quantityNumber: quantityInfo?.QuantityNumber ?? null,
+    };
+  });
+
+  const total = await bookingModel.countShopBookings(shopCode, filters);
+
+  const bookingSummaryRows =
+    await bookingModel.getShopBookingStatusSummary(shopCode);
+  const paymentSummaryRows =
+    await bookingModel.getShopPaymentStatusSummary(shopCode);
+
+  const bookingSummary: Record<string, number> = {
+    pending: 0,
+    confirmed: 0,
+    completed: 0,
+    cancelled: 0,
+  };
+  bookingSummaryRows.forEach((row: any) => {
+    if (row.BookingStatus) {
+      bookingSummary[String(row.BookingStatus)] = Number(row.total || 0);
+    }
+  });
+
+  const paymentSummary: Record<string, number> = {
+    pending: 0,
+    paid: 0,
+    failed: 0,
+    refunded: 0,
+  };
+  paymentSummaryRows.forEach((row: any) => {
+    if (row.PaymentStatus) {
+      paymentSummary[String(row.PaymentStatus)] = Number(row.total || 0);
+    }
+  });
+
+  return {
+    data,
+    pagination: {
+      limit,
+      offset,
+      total,
+    },
+    summary: {
+      bookingStatus: bookingSummary,
+      paymentStatus: paymentSummary,
+    },
+  };
+}
+
 export async function getCustomerBookingDetail(
   bookingCode: number,
   userId?: number
@@ -1116,6 +1251,28 @@ export async function cancelBookingByOwner(bookingCode: number) {
 
   if (wasConfirmed) {
     await bookingModel.decrementFieldRent(Number(booking.FieldCode));
+  }
+
+  return {
+    BookingCode: bookingCode,
+    FieldCode: booking.FieldCode,
+  };
+}
+
+export async function confirmBookingForOwner(bookingCode: number) {
+  const booking = await bookingModel.getByBookingCode(String(bookingCode));
+  if (!booking) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Booking không tồn tại");
+  }
+
+  if (booking.BookingStatus === "confirmed") {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "Booking đã được xác nhận");
+  }
+
+  await bookingModel.setBookingStatus(bookingCode, "confirmed");
+
+  if (Number.isFinite(Number(booking.FieldCode))) {
+    await bookingModel.incrementFieldRent(Number(booking.FieldCode));
   }
 
   return {

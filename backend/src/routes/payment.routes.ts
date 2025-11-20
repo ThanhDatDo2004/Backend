@@ -6,9 +6,21 @@ const router = express.Router();
 
 // Customer endpoints
 router.post("/bookings/:bookingCode/initiate", requireAuth, paymentController.initiatePayment);
-router.get("/bookings/:bookingCode/status", paymentController.getPaymentStatus);
-router.get("/bookings/:bookingCode/verify", paymentController.verifyPayment);
-router.get("/result/:bookingCode", paymentController.getPaymentResult);
+router.get(
+  "/bookings/:bookingCode/status",
+  requireAuth,
+  paymentController.getPaymentStatus
+);
+router.get(
+  "/bookings/:bookingCode/verify",
+  requireAuth,
+  paymentController.verifyPayment
+);
+router.get(
+  "/result/:bookingCode",
+  requireAuth,
+  paymentController.getPaymentResult
+);
 
 // Webhook callback from SePay
 router.post("/webhook/sepay", paymentController.sepayCallback);

@@ -3,8 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import payoutService from "../services/payout.service";
-import queryService from "../services/query";
-import { RowDataPacket } from "mysql2";
+import shopService from "../services/shop.service";
 
 const walletController = {
   /**
@@ -15,17 +14,12 @@ const walletController = {
     try {
       const userId = (req as any).user?.UserID;
 
-      // Lấy shop code
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
+      const shop = await shopService.getByUserId(Number(userId));
+      if (!shop?.shop_code) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
       }
 
-      const shopCode = shopRows[0].ShopCode;
+      const shopCode = Number(shop.shop_code);
 
       const stats = await payoutService.getShopWalletStats(shopCode);
 
@@ -49,48 +43,24 @@ const walletController = {
       const userId = (req as any).user?.UserID;
       const { type, limit = 10, offset = 0 } = req.query;
 
-      // Lấy shop code
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
+      const shop = await shopService.getByUserId(Number(userId));
+      if (!shop?.shop_code) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
       }
 
-      const shopCode = shopRows[0].ShopCode;
+      const shopCode = Number(shop.shop_code);
+      const numericLimit = Number(limit) || 10;
+      const numericOffset = Number(offset) || 0;
 
-      let query = `SELECT wt.*, b.BookingCode, pr.PayoutID
-                   FROM Wallet_Transactions wt
-                   LEFT JOIN Bookings b ON wt.BookingCode = b.BookingCode
-                   LEFT JOIN Payout_Requests pr ON wt.PayoutID = pr.PayoutID
-                   WHERE wt.ShopCode = ?`;
-      const params: any[] = [shopCode];
-
-      if (type) {
-        query += ` AND wt.Type = ?`;
-        params.push(type);
-      }
-
-      query += ` ORDER BY wt.CreateAt DESC LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [transactions] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
+      const transactions = await payoutService.listWalletTransactions(
+        shopCode,
+        typeof type === "string" ? type : undefined,
+        numericLimit,
+        numericOffset
       );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Wallet_Transactions WHERE ShopCode = ?`;
-      const countParams: any[] = [shopCode];
-      if (type) {
-        countQuery += ` AND Type = ?`;
-        countParams.push(type);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
+      const total = await payoutService.countWalletTransactions(
+        shopCode,
+        typeof type === "string" ? type : undefined
       );
 
       return apiResponse.success(
@@ -98,9 +68,9 @@ const walletController = {
         {
           data: transactions,
           pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
+            limit: numericLimit,
+            offset: numericOffset,
+            total,
           },
         },
         "Lịch sử giao dịch",
@@ -155,36 +125,19 @@ const walletController = {
       const { shopCode } = req.params;
       const { type, limit = 10, offset = 0 } = req.query;
 
-      let query = `SELECT wt.*, b.BookingCode, pr.PayoutID
-                   FROM Wallet_Transactions wt
-                   LEFT JOIN Bookings b ON wt.BookingCode = b.BookingCode
-                   LEFT JOIN Payout_Requests pr ON wt.PayoutID = pr.PayoutID
-                   WHERE wt.ShopCode = ?`;
-      const params: any[] = [Number(shopCode)];
+      const numericLimit = Number(limit) || 10;
+      const numericOffset = Number(offset) || 0;
+      const numericShopCode = Number(shopCode);
 
-      if (type) {
-        query += ` AND wt.Type = ?`;
-        params.push(type);
-      }
-
-      query += ` ORDER BY wt.CreateAt DESC LIMIT ? OFFSET ?`;
-      params.push(Number(limit), Number(offset));
-
-      const [transactions] = await queryService.query<RowDataPacket[]>(
-        query,
-        params
+      const transactions = await payoutService.listWalletTransactions(
+        numericShopCode,
+        typeof type === "string" ? type : undefined,
+        numericLimit,
+        numericOffset
       );
-
-      // Get total
-      let countQuery = `SELECT COUNT(*) as total FROM Wallet_Transactions WHERE ShopCode = ?`;
-      const countParams: any[] = [Number(shopCode)];
-      if (type) {
-        countQuery += ` AND Type = ?`;
-        countParams.push(type);
-      }
-      const [countRows] = await queryService.query<RowDataPacket[]>(
-        countQuery,
-        countParams
+      const total = await payoutService.countWalletTransactions(
+        numericShopCode,
+        typeof type === "string" ? type : undefined
       );
 
       return apiResponse.success(
@@ -192,9 +145,9 @@ const walletController = {
         {
           data: transactions,
           pagination: {
-            limit: Number(limit),
-            offset: Number(offset),
-            total: countRows?.[0]?.total || 0,
+            limit: numericLimit,
+            offset: numericOffset,
+            total,
           },
         },
         "Lịch sử giao dịch",

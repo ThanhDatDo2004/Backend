@@ -2,9 +2,18 @@
 const authQueries = {
   // Lấy thông tin đăng nhập (Users: PascalCase)
   getUserAuth: `
-    SELECT UserID, LevelCode, FullName, Email, PasswordHash, IsActive, _destroy
-    FROM Users
-    WHERE Email = ?
+    SELECT 
+      u.UserID,
+      u.LevelCode,
+      u.FullName,
+      u.Email,
+      u.PasswordHash,
+      u.IsActive,
+      u._destroy,
+      ul.LevelType
+    FROM Users u
+    LEFT JOIN Users_Level ul ON ul.LevelCode = u.LevelCode
+    WHERE u.Email = ?
     LIMIT 1
   `,
 

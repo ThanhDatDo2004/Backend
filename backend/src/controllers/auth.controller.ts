@@ -44,10 +44,11 @@ const authController = {
         );
       }
 
-      const { PasswordHash, IsActive, _destroy, ...dataUser } = user as {
+      const { PasswordHash, IsActive, _destroy, LevelType, ...dataUser } = user as {
         PasswordHash: string;
         IsActive?: number;
         _destroy?: number;
+        LevelType?: string | null;
       };
 
       if (Number(_destroy ?? 0) === 1) {
@@ -79,12 +80,21 @@ const authController = {
       }
       const userId = Number(user?.UserID ?? 0);
       const levelCode = Number(user?.LevelCode);
+      const normalizedLevelType = String(LevelType ?? "").toLowerCase();
+      const derivedRole =
+        normalizedLevelType === "admin"
+          ? "admin"
+          : normalizedLevelType === "shop"
+          ? "shop"
+          : "user";
+
       const normalizedUser = {
         ...dataUser,
         UserID: userId,
         LevelCode: levelCode,
         IsActive,
-        role: "user",
+        LevelType,
+        role: derivedRole,
         isGuest: false,
       };
 

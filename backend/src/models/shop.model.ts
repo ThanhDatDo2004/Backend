@@ -114,6 +114,18 @@ const shopModel = {
     return shopRows?.[0] ? Number((shopRows[0] as any).ShopCode ?? 0) : null;
   },
 
+  async listBankAccounts(shopCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT ShopBankID, ShopCode, BankName, AccountNumber, AccountHolder, IsDefault,
+              CreateAt, UpdateAt
+       FROM Shop_Bank_Accounts
+       WHERE ShopCode = ?
+       ORDER BY CreateAt DESC`,
+      [shopCode]
+    );
+    return rows || [];
+  },
+
   /**
    * Create new shop
    */

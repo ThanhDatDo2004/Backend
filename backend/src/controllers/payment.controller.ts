@@ -3,8 +3,59 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import paymentService from "../services/payment.service";
-import queryService from "../services/query";
-import { RowDataPacket } from "mysql2";
+
+function resolveCurrentUser(req: Request) {
+  const rawUser = (req as any).user ?? {};
+  const userId = Number(
+    rawUser.UserID ?? rawUser.user_id ?? rawUser.user_code ?? rawUser.id
+  );
+  const role = String(
+    rawUser.role ?? rawUser.LevelType ?? rawUser.level_type ?? ""
+  ).toLowerCase();
+  return { userId, role };
+}
+
+function parseBookingCode(value: string): number | null {
+  const direct = Number(value);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  const match = String(value).match(/(\d+)/);
+  if (match && match[1]) {
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function ensureBookingAccess(
+  req: Request,
+  booking: { CustomerUserID?: number | null; ShopOwnerUserID?: number | null }
+) {
+  const { userId, role } = resolveCurrentUser(req);
+
+  if (role === "admin") {
+    return;
+  }
+
+  if (!Number.isFinite(userId)) {
+    throw new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập");
+  }
+
+  if (
+    Number(booking.CustomerUserID) === userId ||
+    Number(booking.ShopOwnerUserID) === userId
+  ) {
+    return;
+  }
+
+  throw new ApiError(
+    StatusCodes.FORBIDDEN,
+    "Bạn không có quyền truy cập thông tin thanh toán của booking này"
+  );
+}
 
 const paymentController = {
   /**
@@ -41,31 +92,26 @@ const paymentController = {
       }
 
       // Try to find existing booking by searchable identifier
-      // First, try direct numeric match (if bookingCode is already a number in DB)
-      let existingBooking: any = null;
-
-      // Search strategy: try numeric parsing first
-      const numericMatch = String(bookingCode).match(/(\d+)/);
-      if (numericMatch) {
-        const numCode = Number(numericMatch[1]);
-        const [bookingRows] = await queryService.query<RowDataPacket[]>(
-          `SELECT b.*, f.ShopCode, f.FieldCode, f.DefaultPricePerHour, s.UserID AS ShopOwnerUserID
-           FROM Bookings b
-           JOIN Fields f ON b.FieldCode = f.FieldCode
-           JOIN Shops s ON f.ShopCode = s.ShopCode
-           WHERE b.BookingCode = ?`,
-          [numCode]
+      const normalizedCode = parseBookingCode(String(bookingCode));
+      if (!normalizedCode) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
         );
-        existingBooking = bookingRows?.[0];
       }
 
-      if (!existingBooking) {
+      const booking = await paymentService.getBookingDetailWithOwner(
+        normalizedCode
+      );
+
+      if (!booking) {
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
       }
 
-      const booking = existingBooking;
       const customerUserId = Number(booking.CustomerUserID);
       const shopOwnerUserId = Number(booking.ShopOwnerUserID);
 
@@ -87,7 +133,7 @@ const paymentController = {
 
       // Tạo payment record với BookingCode thực (INT)
       const paymentInfo = await paymentService.initiatePayment(
-        booking.BookingCode, // Use the actual INT BookingCode from DB
+        booking.BookingCode,
         booking.TotalPrice,
         payment_method
       );
@@ -161,24 +207,24 @@ const paymentController = {
         );
       }
 
-      // Normalize booking code for INT column: use digits if present
-      let searchBookingCode: number;
-      const bookingCodeNum = Number(bookingCode);
-      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
-        searchBookingCode = bookingCodeNum;
-      } else {
-        const match = String(bookingCode).match(/(\d+)/);
-        if (match) {
-          searchBookingCode = Number(match[1]);
-        } else {
-          return next(
-            new ApiError(
-              StatusCodes.BAD_REQUEST,
-              "BookingCode format không hợp lệ"
-            )
-          );
-        }
+      const searchBookingCode = parseBookingCode(String(bookingCode));
+      if (!searchBookingCode) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
+        );
       }
+
+      const bookingInfo =
+        await paymentService.getBookingOwnershipInfo(searchBookingCode);
+      if (!bookingInfo) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
+        );
+      }
+      ensureBookingAccess(req, bookingInfo);
 
       // Lấy payment info
       let payment = await paymentService.getPaymentByBookingCode(
@@ -187,31 +233,14 @@ const paymentController = {
 
       // Nếu payment không tìm thấy (transaction chưa commit), fallback: lấy booking info
       if (!payment) {
-        console.log(
-          `Payment not found for BookingCode ${searchBookingCode}, trying fallback...`
-        );
-
-        // Tìm booking để trả về status pending (payment vẫn đang được init)
-        const [bookingRows] = await queryService.query<RowDataPacket[]>(
-          `SELECT BookingCode, TotalPrice, PaymentStatus FROM Bookings WHERE BookingCode = ?`,
-          [searchBookingCode]
-        );
-
-        if (!bookingRows?.[0]) {
-          return next(
-            new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
-          );
-        }
-
-        const booking = bookingRows[0];
         return apiResponse.success(
           res,
           {
             paymentID: null,
             bookingCode: searchBookingCode,
             bookingId: searchBookingCode,
-            amount: booking.TotalPrice,
-            status: booking.PaymentStatus || "pending",
+            amount: bookingInfo.TotalPrice,
+            status: bookingInfo.PaymentStatus || "pending",
             paidAt: null,
           },
           "Lấy trạng thái thanh toán thành công (pending)",
@@ -256,24 +285,24 @@ const paymentController = {
         );
       }
 
-      // Normalize booking code
-      let searchBookingCode: number;
-      const bookingCodeNum = Number(bookingCode);
-      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
-        searchBookingCode = bookingCodeNum;
-      } else {
-        const match = String(bookingCode).match(/(\d+)/);
-        if (match) {
-          searchBookingCode = Number(match[1]);
-        } else {
-          return next(
-            new ApiError(
-              StatusCodes.BAD_REQUEST,
-              "BookingCode format không hợp lệ"
-            )
-          );
-        }
+      const searchBookingCode = parseBookingCode(String(bookingCode));
+      if (!searchBookingCode) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
+        );
       }
+
+      const bookingInfo =
+        await paymentService.getBookingOwnershipInfo(searchBookingCode);
+      if (!bookingInfo) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
+        );
+      }
+      ensureBookingAccess(req, bookingInfo);
 
       // Get payment
       const payment = await paymentService.getPaymentByBookingCode(searchBookingCode as any);
@@ -299,14 +328,12 @@ const paymentController = {
       }
 
       // Check if SePay webhook has been called
-      const [logs] = await queryService.query<RowDataPacket[]>(
-        `SELECT LogID FROM Payment_Logs 
-         WHERE PaymentID = ? AND Action = 'sepay_webhook' 
-         LIMIT 1`,
-        [payment.PaymentID]
+      const hasWebhookLog = await paymentService.hasPaymentLog(
+        payment.PaymentID,
+        "sepay_webhook"
       );
 
-      if (logs?.[0]) {
+      if (hasWebhookLog) {
         // Webhook đã gọi, payment đã được update
         return apiResponse.success(
           res,
@@ -399,11 +426,11 @@ const paymentController = {
 
       // Idempotency: nếu đã log id này rồi thì coi như xử lý xong
       try {
-        const [logs] = await queryService.query<RowDataPacket[]>(
-          `SELECT LogID FROM Payment_Logs WHERE Action = 'sepay_webhook' AND MomoTransactionID = ? LIMIT 1`,
-          [String(id)]
+        const duplicate = await paymentService.hasWebhookLogByExternalId(
+          "sepay_webhook",
+          String(id)
         );
-        if (logs?.[0]) {
+        if (duplicate) {
           return apiResponse.success(
             res,
             { duplicate: true },
@@ -447,13 +474,12 @@ const paymentController = {
       // Fallback: match by amount to the most recent pending payment
       if (!payment && isIncomingTransfer && transferAmountValue) {
         try {
-          const [rows] = await queryService.query<RowDataPacket[]>(
-            `SELECT * FROM Payments_Admin 
-             WHERE PaymentStatus = 'pending' AND Amount = ? 
-             ORDER BY CreateAt DESC LIMIT 1`,
-            [transferAmountValue]
+          const maybePayment = await paymentService.findPendingPaymentByAmount(
+            transferAmountValue
           );
-          if (rows?.[0]) payment = rows[0];
+          if (maybePayment) {
+            payment = maybePayment;
+          }
         } catch (_) {}
       }
 
@@ -539,24 +565,26 @@ const paymentController = {
         );
       }
 
-      // Normalize booking code for INT column: use digits if present
-      let searchBookingCode: number;
-      const bookingCodeNum = Number(bookingCode);
-      if (!isNaN(bookingCodeNum) && bookingCodeNum > 0) {
-        searchBookingCode = bookingCodeNum;
-      } else {
-        const match = String(bookingCode).match(/(\d+)/);
-        if (match) {
-          searchBookingCode = Number(match[1]);
-        } else {
-          return next(
-            new ApiError(
-              StatusCodes.BAD_REQUEST,
-              "BookingCode format không hợp lệ"
-            )
-          );
-        }
+      const searchBookingCode = parseBookingCode(String(bookingCode));
+      if (!searchBookingCode) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "BookingCode format không hợp lệ"
+          )
+        );
       }
+
+      const booking = await paymentService.getBookingDetailWithOwner(
+        searchBookingCode
+      );
+
+      if (!booking) {
+        return next(
+          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
+        );
+      }
+      ensureBookingAccess(req, booking);
 
       // Lấy payment info
       const payment = await paymentService.getPaymentByBookingCode(
@@ -569,29 +597,8 @@ const paymentController = {
         );
       }
 
-      // Lấy booking + slot info
-      const [bookingRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT b.*, f.ShopCode, f.FieldCode, f.FieldName
-         FROM Bookings b
-         JOIN Fields f ON b.FieldCode = f.FieldCode
-         WHERE b.BookingCode = ?`,
-        [searchBookingCode]
-      );
-
-      if (!bookingRows?.[0]) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
-        );
-      }
-
-      const booking = bookingRows[0];
-
-      // Lấy slot info
-      const [slotRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT * FROM Field_Slots
-         WHERE BookingCode = ?
-         ORDER BY PlayDate, StartTime`,
-        [searchBookingCode]
+      const slotRows = await paymentService.getFieldSlotsForBooking(
+        searchBookingCode
       );
 
       return apiResponse.success(
@@ -604,7 +611,7 @@ const paymentController = {
           field_name: booking.FieldName,
           total_price: payment.Amount,
           slots:
-            slotRows?.map((slot: RowDataPacket) => ({
+            slotRows?.map((slot: any) => ({
               slot_id: slot.SlotID,
               play_date: slot.PlayDate,
               start_time: slot.StartTime,

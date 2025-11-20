@@ -220,6 +220,37 @@ export async function releaseHeldSlots(bookingCode: string | number) {
   // But keeping it here for backward compatibility
 }
 
+export async function getBookingOwnershipInfo(bookingCode: number) {
+  return await paymentModel.getBookingOwnershipInfo(bookingCode);
+}
+
+export async function hasPaymentLog(
+  paymentID: number,
+  action: string,
+  externalId?: string
+) {
+  return await paymentModel.hasPaymentLog(paymentID, action, externalId);
+}
+
+export async function hasWebhookLogByExternalId(
+  action: string,
+  externalId: string
+) {
+  return await paymentModel.hasWebhookLogByExternalId(action, externalId);
+}
+
+export async function findPendingPaymentByAmount(amount: number) {
+  return await paymentModel.findPendingPaymentByAmount(amount);
+}
+
+export async function getBookingDetailWithOwner(bookingCode: number) {
+  return await paymentModel.getBookingDetailWithOwner(bookingCode);
+}
+
+export async function getFieldSlotsForBooking(bookingCode: number) {
+  return await paymentModel.getFieldSlotsForBooking(bookingCode);
+}
+
 const paymentService = {
   calculateFees,
   initiatePayment,
@@ -229,6 +260,12 @@ const paymentService = {
   handlePaymentSuccess,
   logPaymentAction,
   releaseHeldSlots,
+  getBookingOwnershipInfo,
+  hasPaymentLog,
+  hasWebhookLogByExternalId,
+  findPendingPaymentByAmount,
+  getBookingDetailWithOwner,
+  getFieldSlotsForBooking,
 };
 
 export default paymentService;

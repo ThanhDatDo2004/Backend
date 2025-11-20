@@ -399,6 +399,42 @@ const payoutModel = {
 
     return { balance, totalCredit, totalDebit, available: balance };
   },
+
+  async listWalletTransactions(
+    shopCode: number,
+    options: { type?: string; limit: number; offset: number }
+  ) {
+    let query = `SELECT wt.*, b.BookingCode, pr.PayoutID
+                 FROM Wallet_Transactions wt
+                 LEFT JOIN Bookings b ON wt.BookingCode = b.BookingCode
+                 LEFT JOIN Payout_Requests pr ON wt.PayoutID = pr.PayoutID
+                 WHERE wt.ShopCode = ?`;
+    const params: any[] = [shopCode];
+
+    if (options.type) {
+      query += ` AND wt.Type = ?`;
+      params.push(options.type);
+    }
+
+    query += ` ORDER BY wt.CreateAt DESC LIMIT ? OFFSET ?`;
+    params.push(options.limit, options.offset);
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return rows || [];
+  },
+
+  async countWalletTransactions(shopCode: number, type?: string) {
+    let query = `SELECT COUNT(*) as total FROM Wallet_Transactions WHERE ShopCode = ?`;
+    const params: any[] = [shopCode];
+
+    if (type) {
+      query += ` AND Type = ?`;
+      params.push(type);
+    }
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return Number(rows?.[0]?.total ?? 0);
+  },
 };
 
 export default payoutModel;

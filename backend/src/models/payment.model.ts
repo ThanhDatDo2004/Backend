@@ -216,6 +216,85 @@ const paymentModel = {
     return rows?.[0]?.Amount || null;
   },
 
+  async getBookingOwnershipInfo(bookingCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT 
+        b.BookingCode,
+        b.CustomerUserID,
+        b.TotalPrice,
+        b.PaymentStatus,
+        s.UserID AS ShopOwnerUserID
+       FROM Bookings b
+       JOIN Fields f ON b.FieldCode = f.FieldCode
+       JOIN Shops s ON f.ShopCode = s.ShopCode
+       WHERE b.BookingCode = ?
+       LIMIT 1`,
+      [bookingCode]
+    );
+    return rows?.[0] || null;
+  },
+
+  async hasPaymentLog(
+    paymentID: number,
+    action: string,
+    externalId?: string | null
+  ): Promise<boolean> {
+    const params: any[] = [paymentID, action];
+    let query = `SELECT LogID FROM Payment_Logs WHERE PaymentID = ? AND Action = ?`;
+    if (externalId) {
+      query += ` AND MomoTransactionID = ?`;
+      params.push(externalId);
+    }
+    query += ` LIMIT 1`;
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return Boolean(rows?.[0]);
+  },
+
+  async hasWebhookLogByExternalId(
+    action: string,
+    externalId: string
+  ): Promise<boolean> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT LogID FROM Payment_Logs WHERE Action = ? AND MomoTransactionID = ? LIMIT 1`,
+      [action, externalId]
+    );
+    return Boolean(rows?.[0]);
+  },
+
+  async findPendingPaymentByAmount(amount: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT * FROM Payments_Admin 
+       WHERE PaymentStatus = 'pending' AND Amount = ? 
+       ORDER BY CreateAt DESC LIMIT 1`,
+      [amount]
+    );
+    return rows?.[0] || null;
+  },
+
+  async getBookingDetailWithOwner(bookingCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT b.*, f.ShopCode, f.FieldCode, f.FieldName, s.UserID AS ShopOwnerUserID
+       FROM Bookings b
+       JOIN Fields f ON b.FieldCode = f.FieldCode
+       JOIN Shops s ON f.ShopCode = s.ShopCode
+       WHERE b.BookingCode = ?`,
+      [bookingCode]
+    );
+    return rows?.[0] || null;
+  },
+
+  async getFieldSlotsForBooking(bookingCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT SlotID, FieldCode, PlayDate, StartTime, EndTime
+       FROM Field_Slots
+       WHERE BookingCode = ?
+       ORDER BY PlayDate, StartTime`,
+      [bookingCode]
+    );
+    return rows || [];
+  },
+
   /**
    * Insert wallet credit (shop wallet)
    */

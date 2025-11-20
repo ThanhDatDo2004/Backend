@@ -53,6 +53,32 @@ export type BookingSlotWithQuantityRow = RowDataPacket & {
   Status: string;
 };
 
+export type ShopBookingFilters = {
+  status?: string;
+  search?: string;
+  sortField?: string;
+  sortOrder?: "ASC" | "DESC";
+  limit: number;
+  offset: number;
+};
+
+export type ShopBookingRow = RowDataPacket & {
+  BookingCode: number;
+  FieldCode: number;
+  CustomerUserID: number | null;
+  BookingStatus: string;
+  PaymentStatus: string;
+  TotalPrice: number;
+  NetToShop: number | null;
+  CheckinCode: string | null;
+  CheckinTime: string | null;
+  CreateAt: string;
+  UpdateAt: string;
+  CustomerName: string | null;
+  CustomerPhone: string | null;
+  FieldName: string | null;
+};
+
 // ============ BOOKING MODEL ============
 const bookingModel = {
   /**
@@ -513,6 +539,119 @@ const bookingModel = {
     return rows as BookingSlotWithQuantityRow[];
   },
 
+  async listShopBookings(
+    shopCode: number,
+    options: ShopBookingFilters
+  ): Promise<ShopBookingRow[]> {
+    const sortColumnMap: Record<string, string> = {
+      CreateAt: "b.CreateAt",
+      PlayDate: "b.CreateAt",
+      TotalPrice: "b.TotalPrice",
+      BookingStatus: "b.BookingStatus",
+    };
+    const rawSortField = String(options.sortField ?? "").trim();
+    const sortColumn =
+      sortColumnMap[rawSortField] ?? "b.CreateAt";
+    const sortOrder = options.sortOrder === "ASC" ? "ASC" : "DESC";
+
+    let query = `SELECT b.BookingCode,
+                        b.FieldCode,
+                        b.CustomerUserID,
+                        b.BookingStatus,
+                        b.PaymentStatus,
+                        b.TotalPrice,
+                        b.NetToShop,
+                        b.CheckinCode,
+                        b.CheckinTime,
+                        b.CreateAt,
+                        b.UpdateAt,
+                        u.FullName AS CustomerName,
+                        b.CustomerPhone,
+                        f.FieldName
+                 FROM Bookings b
+                 JOIN Fields f ON b.FieldCode = f.FieldCode
+                 LEFT JOIN Users u ON b.CustomerUserID = u.UserID
+                 WHERE f.ShopCode = ?`;
+    const params: any[] = [shopCode];
+
+    if (options.status) {
+      query += ` AND b.BookingStatus = ?`;
+      params.push(options.status);
+    }
+
+    if (options.search) {
+      const searchTerm = `%${options.search}%`;
+      query += ` AND (
+        CAST(b.BookingCode AS CHAR) LIKE ?
+        OR f.FieldName LIKE ?
+        OR b.CustomerPhone LIKE ?
+        OR u.FullName LIKE ?
+      )`;
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    query += ` ORDER BY ${sortColumn} ${sortOrder} LIMIT ? OFFSET ?`;
+    params.push(options.limit, options.offset);
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return rows as ShopBookingRow[];
+  },
+
+  async countShopBookings(
+    shopCode: number,
+    options: ShopBookingFilters
+  ): Promise<number> {
+    let query = `SELECT COUNT(*) AS total
+                 FROM Bookings b
+                 JOIN Fields f ON b.FieldCode = f.FieldCode
+                 LEFT JOIN Users u ON b.CustomerUserID = u.UserID
+                 WHERE f.ShopCode = ?`;
+    const params: any[] = [shopCode];
+
+    if (options.status) {
+      query += ` AND b.BookingStatus = ?`;
+      params.push(options.status);
+    }
+
+    if (options.search) {
+      const searchTerm = `%${options.search}%`;
+      query += ` AND (
+        CAST(b.BookingCode AS CHAR) LIKE ?
+        OR f.FieldName LIKE ?
+        OR b.CustomerPhone LIKE ?
+        OR u.FullName LIKE ?
+      )`;
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return Number(rows?.[0]?.total ?? 0);
+  },
+
+  async getShopBookingStatusSummary(shopCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT b.BookingStatus, COUNT(*) AS total
+       FROM Bookings b
+       JOIN Fields f ON b.FieldCode = f.FieldCode
+       WHERE f.ShopCode = ?
+       GROUP BY b.BookingStatus`,
+      [shopCode]
+    );
+    return rows;
+  },
+
+  async getShopPaymentStatusSummary(shopCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT b.PaymentStatus, COUNT(*) AS total
+       FROM Bookings b
+       JOIN Fields f ON b.FieldCode = f.FieldCode
+       WHERE f.ShopCode = ?
+       GROUP BY b.PaymentStatus`,
+      [shopCode]
+    );
+    return rows;
+  },
+
   async getBookingDetail(
     bookingCode: number,
     userId?: number
@@ -617,6 +756,16 @@ const bookingModel = {
     await queryService.query<ResultSetHeader>(
       `UPDATE Fields
          SET Rent = GREATEST(Rent - 1, 0),
+             UpdateAt = NOW()
+       WHERE FieldCode = ?`,
+      [fieldCode]
+    );
+  },
+
+  async incrementFieldRent(fieldCode: number): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Fields
+         SET Rent = Rent + 1,
              UpdateAt = NOW()
        WHERE FieldCode = ?`,
       [fieldCode]

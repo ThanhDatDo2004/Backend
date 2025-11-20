@@ -1,11 +1,14 @@
 import express from "express";
 import adminController from "../controllers/admin.controller";
-import paymentController from "../controllers/payment.controller";
 import payoutController from "../controllers/payout.controller";
 import walletController from "../controllers/wallet.controller";
 import bookingController from "../controllers/booking.controller";
+import { requireAuth } from "../middlewares/auth.middleware";
+import { requireAdmin } from "../middlewares/role.middleware";
 
 const router = express.Router();
+
+router.use(requireAuth, requireAdmin());
 
 // User and shop management
 router.get("/shops", adminController.listShops);

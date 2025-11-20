@@ -273,6 +273,26 @@ export async function getShopWalletStats(shopCode: number) {
   return await payoutModel.getWalletStats(shopCode);
 }
 
+export async function listWalletTransactions(
+  shopCode: number,
+  type: string | undefined,
+  limit: number,
+  offset: number
+) {
+  return await payoutModel.listWalletTransactions(shopCode, {
+    type,
+    limit,
+    offset,
+  });
+}
+
+export async function countWalletTransactions(
+  shopCode: number,
+  type: string | undefined
+) {
+  return await payoutModel.countWalletTransactions(shopCode, type);
+}
+
 const payoutService = {
   createPayoutRequest,
   getPayoutByID,
@@ -281,6 +301,8 @@ const payoutService = {
   approvePayoutRequest,
   rejectPayoutRequest,
   getShopWalletStats,
+  listWalletTransactions,
+  countWalletTransactions,
 };
 
 export default payoutService;

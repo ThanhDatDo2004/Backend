@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { StatusCodes } from "http-status-codes";
-import { ApiError } from "http-errors";
+import ApiError from "../utils/apiErrors";
 import fieldQuantityService from "../services/fieldQuantity.service";
 import fieldModel from "../models/field.model";
 import shopService from "../services/shop.service";

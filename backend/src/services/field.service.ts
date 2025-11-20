@@ -16,6 +16,7 @@ import { StatusCodes } from "http-status-codes";
 import localUploadService from "./localUpload.service";
 import fieldQuantityService from "./fieldQuantity.service";
 import path from "path";
+import { RowDataPacket } from "mysql2";
 
 type FieldStatusDb = "active" | "maintenance" | "inactive";
 
@@ -1084,6 +1085,113 @@ const fieldService = {
     }
 
     return this.getById(fieldId);
+  },
+
+  async getFieldStatsByCode(fieldCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `
+        SELECT
+          f.FieldCode,
+          f.FieldName,
+          f.Rent,
+          f.Rent as booking_count,
+          f.Status,
+          f.DefaultPricePerHour,
+          f.SportType,
+          s.ShopName,
+          s.PhoneNumber,
+          (SELECT COUNT(*) FROM Bookings
+           WHERE FieldCode = f.FieldCode
+           AND BookingStatus = 'confirmed') as confirmed_count,
+          (SELECT COUNT(*) FROM Bookings
+           WHERE FieldCode = f.FieldCode) as total_bookings
+        FROM Fields f
+        JOIN Shops s ON f.ShopCode = s.ShopCode
+        WHERE f.FieldCode = ?
+      `,
+      [fieldCode]
+    );
+
+    return rows?.[0] || null;
+  },
+
+  async listFieldsWithRent(
+    shopCode: number,
+    limit: number,
+    offset: number
+  ) {
+    const [fields] = await queryService.query<RowDataPacket[]>(
+      `
+        SELECT
+          f.FieldCode,
+          f.FieldName,
+          f.Rent,
+          f.Rent as booking_count,
+          f.Status,
+          f.DefaultPricePerHour,
+          f.SportType,
+          s.ShopName
+        FROM Fields f
+        JOIN Shops s ON f.ShopCode = s.ShopCode
+        WHERE f.ShopCode = ?
+        ORDER BY f.Rent DESC
+        LIMIT ? OFFSET ?
+      `,
+      [shopCode, limit, offset]
+    );
+
+    const [countRows] = await queryService.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as total FROM Fields WHERE ShopCode = ?`,
+      [shopCode]
+    );
+
+    return {
+      data: fields,
+      total: Number(countRows?.[0]?.total ?? 0),
+    };
+  },
+
+  async syncFieldRent(fieldCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `
+        SELECT COUNT(*) as rent_count
+        FROM Bookings
+        WHERE FieldCode = ?
+          AND BookingStatus = 'confirmed'
+      `,
+      [fieldCode]
+    );
+
+    const actualRent = Number(rows?.[0]?.rent_count ?? 0);
+
+    await queryService.query(
+      `
+        UPDATE Fields
+        SET Rent = ?
+        WHERE FieldCode = ?
+      `,
+      [actualRent, fieldCode]
+    );
+
+    return actualRent;
+  },
+
+  async syncAllFieldRents() {
+    const [fields] = await queryService.query<RowDataPacket[]>(
+      `SELECT FieldCode FROM Fields`,
+      []
+    );
+
+    let syncedCount = 0;
+    if (fields && fields.length > 0) {
+      for (const field of fields) {
+        const fieldCode = Number(field.FieldCode);
+        if (!Number.isFinite(fieldCode) || fieldCode <= 0) continue;
+        await this.syncFieldRent(fieldCode);
+        syncedCount++;
+      }
+    }
+    return syncedCount;
   },
 
   async hydrateRows(rows: Awaited<ReturnType<typeof fieldModel.list>>) {

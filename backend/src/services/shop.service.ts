@@ -22,6 +22,14 @@ const shopService = {
     return await shopModel.getByCode(shopCode);
   },
 
+  async getShopCodeByUserId(userId: number) {
+    return await shopModel.getShopCodeByUserId(userId);
+  },
+
+  async listBankAccounts(shopCode: number) {
+    return await shopModel.listBankAccounts(shopCode);
+  },
+
   async updateByUserId(
     userId: number,
     payload: ShopUpdatePayload

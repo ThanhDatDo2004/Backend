@@ -3,8 +3,7 @@ import { StatusCodes } from "http-status-codes";
 import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import payoutService from "../services/payout.service";
-import queryService from "../services/query";
-import { RowDataPacket } from "mysql2";
+import shopService from "../services/shop.service";
 
 const payoutController = {
   /**
@@ -24,17 +23,13 @@ const payoutController = {
         return next(new ApiError(StatusCodes.BAD_REQUEST, "Vui lòng nhập mật khẩu để xác nhận"));
       }
 
-      // Lấy shop code của user
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ? AND IsApproved = 'Y'`,
-        [userId]
-      );
+      const shop = await shopService.getByUserId(Number(userId));
 
-      if (!shopRows?.[0]) {
+      if (!shop?.shop_code || shop.is_approved !== "Y") {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop hoặc shop chưa được duyệt"));
       }
 
-      const shopCode = shopRows[0].ShopCode;
+      const shopCode = Number(shop.shop_code);
 
       // Nếu không gửi bank_id, sẽ dùng default (bank_id = 0)
       const bankId = bank_id || 0;
@@ -77,17 +72,12 @@ const payoutController = {
       const userId = (req as any).user?.UserID;
       const { status, limit = 10, offset = 0 } = req.query;
 
-      // Lấy shop code
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
+      const shop = await shopService.getByUserId(Number(userId));
+      if (!shop?.shop_code) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
       }
 
-      const shopCode = shopRows[0].ShopCode;
+      const shopCode = Number(shop.shop_code);
 
       const result = await payoutService.listPayoutsByShop(
         shopCode,
@@ -121,19 +111,14 @@ const payoutController = {
       const userId = (req as any).user?.UserID;
       const { payoutID } = req.params;
 
-      // Kiểm tra quyền
-      const [shopRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT ShopCode FROM Shops WHERE UserID = ?`,
-        [userId]
-      );
-
-      if (!shopRows?.[0]) {
+      const shop = await shopService.getByUserId(Number(userId));
+      if (!shop?.shop_code) {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Bạn không có shop"));
       }
 
       const result = await payoutService.getPayoutByID(Number(payoutID));
 
-      if (!result || result.ShopCode !== shopRows[0].ShopCode) {
+      if (!result || result.ShopCode !== Number(shop.shop_code)) {
         return next(new ApiError(StatusCodes.FORBIDDEN, "Bạn không có quyền truy cập"));
       }
 
