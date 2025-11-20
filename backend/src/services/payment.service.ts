@@ -28,14 +28,12 @@ export function calculateFees(totalPrice: number) {
 export async function initiatePayment(
   bookingCode: string | number,
   totalPrice: number,
-  adminBankID: number,
   paymentMethod: string = "bank_transfer"
 ) {
   const fees = calculateFees(totalPrice);
   const payment = await paymentModel.create(
     bookingCode,
     fees.totalPrice,
-    adminBankID,
     paymentMethod
   );
 

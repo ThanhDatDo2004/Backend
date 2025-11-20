@@ -7,7 +7,6 @@ import queryService from "../services/query";
 export type PaymentRow = {
   PaymentID?: number;
   BookingCode?: string;
-  AdminBankID?: number;
   PaymentMethod?: string;
   Amount?: number;
   PaymentStatus?: "pending" | "paid" | "failed" | "refunded";
@@ -21,7 +20,6 @@ export type PaymentRow = {
 type PaymentDbRow = RowDataPacket & {
   PaymentID?: number;
   BookingCode?: string;
-  AdminBankID?: number;
   PaymentMethod?: string;
   Amount?: number;
   PaymentStatus?: "pending" | "paid" | "failed" | "refunded";
@@ -41,25 +39,22 @@ const paymentModel = {
   async create(
     bookingCode: string | number,
     totalPrice: number,
-    adminBankID: number,
     paymentMethod: string = "bank_transfer"
   ): Promise<PaymentRow> {
     const [result] = await queryService.query<ResultSetHeader>(
       `INSERT INTO Payments_Admin (
         BookingCode,
-        AdminBankID,
         PaymentMethod,
         Amount,
         PaymentStatus,
         CreateAt
-      ) VALUES (?, ?, ?, ?, 'pending', NOW())`,
-      [bookingCode, adminBankID, paymentMethod, totalPrice]
+      ) VALUES (?, ?, ?, 'pending', NOW())`,
+      [bookingCode, paymentMethod, totalPrice]
     );
 
     return {
       PaymentID: Number(result.insertId),
       BookingCode: String(bookingCode),
-      AdminBankID: adminBankID,
       PaymentMethod: paymentMethod,
       Amount: totalPrice,
       PaymentStatus: "pending",
@@ -341,17 +336,6 @@ const paymentModel = {
     );
   },
 
-  /**
-   * Get default admin bank account
-   */
-  async getDefaultAdminBank(): Promise<{ AdminBankID: number } | null> {
-    const [rows] = await queryService.query<RowDataPacket[]>(
-      `SELECT AdminBankID FROM Admin_Bank_Accounts WHERE IsDefault = 'Y' LIMIT 1`,
-      []
-    );
-
-    return rows?.[0] || null;
-  },
 };
 
 export default paymentModel;

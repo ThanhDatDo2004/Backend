@@ -805,24 +805,12 @@ export async function confirmFieldBooking(
   // Return INT booking code thực từ DB
   const transactionId = generateTransactionId();
 
-  // Tạo payment record
-  const bankAccount = await paymentModel.getDefaultAdminBank();
-
-  if (!bankAccount) {
-    throw new ApiError(
-      StatusCodes.NOT_FOUND,
-      "Chưa setup tài khoản ngân hàng admin"
-    );
-  }
-
-  const adminBankID = bankAccount.AdminBankID;
   const paymentMethod = "bank_transfer";
 
   // Tạo payment
   const payment = await paymentModel.create(
     bookingCode,
     finalTotalPrice,
-    adminBankID,
     paymentMethod
   );
 

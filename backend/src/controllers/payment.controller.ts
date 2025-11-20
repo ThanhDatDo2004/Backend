@@ -85,32 +85,10 @@ const paymentController = {
         );
       }
 
-      // Lấy admin bank account (default)
-      const [bankRows] = await queryService.query<RowDataPacket[]>(
-        `SELECT AdminBankID, BankName, AccountNumber, AccountHolder
-         FROM Admin_Bank_Accounts
-         WHERE IsDefault = 'Y' AND (IsActive = 'Y' OR IsActive IS NULL)
-         ORDER BY UpdateAt DESC
-         LIMIT 1`
-      );
-
-      if (!bankRows?.[0]) {
-        return next(
-          new ApiError(
-            StatusCodes.NOT_FOUND,
-            "Chưa setup tài khoản ngân hàng admin"
-          )
-        );
-      }
-
-      const bankRecord = bankRows[0];
-      const adminBankID = bankRecord.AdminBankID;
-
       // Tạo payment record với BookingCode thực (INT)
       const paymentInfo = await paymentService.initiatePayment(
         booking.BookingCode, // Use the actual INT BookingCode from DB
         booking.TotalPrice,
-        adminBankID,
         payment_method
       );
 
@@ -147,10 +125,13 @@ const paymentController = {
           bookingId: booking.BookingCode,
           paymentMethod: payment_method,
           bankAccount: {
-            adminBankId: adminBankID,
-            bankName: bankRecord.BankName,
-            accountNumber: bankRecord.AccountNumber,
-            accountHolder: bankRecord.AccountHolder,
+            bankName:
+              process.env.SEPAY_BANK_NAME ||
+              process.env.SEPAY_BANK ||
+              "BIDV",
+            accountNumber: process.env.SEPAY_ACC || "96247THUERE",
+            accountHolder:
+              process.env.SEPAY_ACC_HOLDER || "ThueRe Platform",
           },
         },
         "Khởi tạo thanh toán thành công",
