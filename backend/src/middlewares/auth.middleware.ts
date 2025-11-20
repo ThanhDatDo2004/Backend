@@ -66,13 +66,10 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
   if (!token) {
     return next();
   }
-
   try {
     const payload = authService.verifyToken(token);
     attachUser(req, payload);
-  } catch (_error) {
-    // Bỏ qua lỗi nếu token không hợp lệ
-  }
+  } catch (_error) {}
   next();
 }
 

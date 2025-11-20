@@ -4,7 +4,6 @@ import apiResponse from "../core/respone";
 import adminService from "../services/admin.service";
 import ApiError from "../utils/apiErrors";
 
-/** ===== Helpers siêu nhẹ, “tự nhiên” ===== */
 const toInt = (v: unknown): number | undefined => {
   if (v === null || v === undefined || v === "") return undefined;
   const n = Number(v);
@@ -39,15 +38,12 @@ const toDateStringLoose = (v: unknown): string | undefined => {
   if (typeof v !== "string") return undefined;
   const s = v.trim();
   if (!s) return undefined;
-  // chấp nhận chuỗi ngày “vừa đủ hiểu”; không ép regex
-  // để backend/service chịu trách nhiệm parse sâu hơn nếu cần.
   return s;
 };
 
 const isOneOf = <T extends string>(val: any, list: readonly T[]): val is T =>
   typeof val === "string" && list.includes(val as T);
 
-/** ======================================= */
 
 const adminController = {
   async listShops(req: Request, res: Response, next: NextFunction) {
@@ -77,7 +73,6 @@ const adminController = {
     }
   },
 
-  /** Nhận isActive rất “thoáng”: boolean | 0/1 | "true"/"false"/"1"/"0"/"yes"/"no"... */
   async updateUserStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = toPosInt(req.params.id);
