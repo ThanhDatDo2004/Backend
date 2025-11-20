@@ -95,40 +95,19 @@ const authController = {
         StatusCodes.OK
       );
     } catch (error: any) {
-      next(
-        new ApiError(
-          500,
-          (error?.message) || "Không thể tạo guest token"
-        )
-      );
-      
+      next(new ApiError(500, error?.message || "Không thể tạo guest token"));
     }
   },
 
-  // =================== SEND CODE (đăng ký mới – chặn nếu email đã tồn tại) ===================
   async sendCode(req: Request, res: Response) {
-    const rawEmail = String(req.body?.email || "");
-    const email = rawEmail.trim().toLowerCase();
-    if (!email) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        message: "Thiếu email",
-      });
-    }
+    const rawEmail = req.body?.email;
+    const email = rawEmail.trim();
 
-    // Không cho gửi mã nếu email đã tồn tại trong database (đăng ký mới)
     const existed = await authModel.findByEmailOrUserId(email, "");
     if (existed) {
-      return res.status(StatusCodes.CONFLICT).json({
-        success: false,
+      return res.status(401).json({
         message: "Email đã tồn tại. Vui lòng sử dụng email khác.",
-        code: "EMAIL_EXISTS",
       });
-    }
-
-    // Cho phép gửi lại mã: nếu đã có mã cũ, xóa nó đi (reset flow)
-    if (otpStore.has(email)) {
-      otpStore.delete(email);
     }
 
     const code = genOTP(6);
@@ -136,61 +115,40 @@ const authController = {
 
     try {
       await sendVerificationEmail(email, code);
-      return res.status(StatusCodes.OK).json({
+      return res.status(200).json({
         success: true,
         message: "Đã gửi mã xác minh",
       });
     } catch (e: any) {
-      // Xóa OTP nếu gửi email thất bại
       otpStore.delete(email);
-      return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+      return res.status(500).json({
         success: false,
-        message: e?.message || "Không gửi được mã",
+        message: "Không gửi được mã",
       });
     }
   },
 
-  // =================== VERIFY CODE ===================
   async verifyCode(req: Request, res: Response) {
-    const email = String(req.body?.email || "")
-      .trim()
-      .toLowerCase();
-    const code = String(req.body?.code || "").trim();
-
-    if (!email || !code) {
-      return res
-        .status(StatusCodes.BAD_REQUEST)
-        .json({ success: false, message: "Thiếu dữ liệu" });
-    }
+    const email = req.body.email.trim();
+    const code = req.body.code;
     const record = otpStore.get(email);
-    if (!record) {
-      return res.status(StatusCodes.BAD_REQUEST).json({
-        success: false,
-        message: "Chưa yêu cầu mã hoặc mã đã hết hạn",
-      });
-    }
-    if (Date.now() > record.expiresAt) {
+
+    if (Date.now() > record!.expiresAt) {
       otpStore.delete(email);
-      return res
-        .status(StatusCodes.BAD_REQUEST)
-        .json({ success: false, message: "Mã đã hết hạn" });
+      return res.json({ success: false, message: "Mã đã hết hạn" });
     }
-    if (record.code !== code) {
-      return res
-        .status(StatusCodes.BAD_REQUEST)
-        .json({ success: false, message: "Mã xác minh không đúng" });
+    if (record!.code !== code) {
+      return res.json({ success: false, message: "Mã xác minh không đúng" });
     }
 
     otpStore.delete(email);
     return res.json({ success: true, message: "Xác minh thành công" });
   },
 
-  // =================== FORGOT PASSWORD (gửi link) ===================
   async forgotPassword(req: Request, res: Response) {
     const schema = z.object({ email: z.string().email() });
     const parsed = schema.safeParse(req.body);
 
-    // Luôn trả về thông báo thành công chung để tránh dò email
     const genericSuccessResponse = () =>
       res.json({
         success: true,
@@ -201,10 +159,9 @@ const authController = {
       return genericSuccessResponse();
     }
 
-    const email = parsed.data.email.trim().toLowerCase();
+    const email = parsed.data.email.trim();
     const user = await authModel.findByEmailOrUserId(email, "");
     if (!user) {
-      // Không làm gì cả, chỉ trả về thông báo thành công ở cuối
       return genericSuccessResponse();
     }
 
