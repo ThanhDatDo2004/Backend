@@ -347,12 +347,7 @@ const payoutModel = {
                           ELSE CONCAT(Note, ' | Lý do từ chối: ', ?)
                         END
            WHERE PayoutID = ? AND Type = 'debit_payout'`,
-          [
-            normalizedReason,
-            normalizedReason,
-            normalizedReason,
-            payoutID,
-          ]
+          [normalizedReason, normalizedReason, normalizedReason, payoutID]
         );
 
         await connection.query<ResultSetHeader>(

@@ -4,8 +4,11 @@ import { requireAuth } from "../middlewares/auth.middleware";
 
 const router = express.Router();
 
-// Customer endpoints
-router.post("/bookings/:bookingCode/initiate", requireAuth, paymentController.initiatePayment);
+router.post(
+  "/bookings/:bookingCode/initiate",
+  requireAuth,
+  paymentController.initiatePayment
+);
 router.get(
   "/bookings/:bookingCode/status",
   requireAuth,
@@ -22,7 +25,6 @@ router.get(
   paymentController.getPaymentResult
 );
 
-// Webhook callback from SePay
 router.post("/webhook/sepay", paymentController.sepayCallback);
 
 export default router;
