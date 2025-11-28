@@ -22,11 +22,7 @@ import { cleanupExpiredHeldSlots } from "./services/booking.service";
 
 const app = express();
 const defaultAllowedOrigins = [
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
   "https://thuere.site",
-  "https://www.thuere.site",
-  "http://thuere.site",
 ];
 
 const allowedOrigins = (
