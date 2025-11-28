@@ -81,6 +81,13 @@ export type ShopBookingRow = RowDataPacket & {
 
 // ============ BOOKING MODEL ============
 const bookingModel = {
+  async runInTransaction<T>(
+    name: string,
+    handler: (connection: PoolConnection) => Promise<T>
+  ) {
+    return queryService.execTransaction<T>(name, handler);
+  },
+
   /**
    * Lock a slot for booking (SELECT FOR UPDATE)
    */
@@ -129,6 +136,25 @@ const bookingModel = {
       `
         UPDATE Field_Slots
         SET Status = 'booked',
+            HoldExpiresAt = NULL,
+            QuantityID = IFNULL(?, QuantityID),
+            UpdateAt = NOW()
+        WHERE SlotID = ?
+      `,
+      [quantityId ?? null, slotId]
+    );
+  },
+
+  async resetSlotForBooking(
+    connection: PoolConnection,
+    slotId: number,
+    quantityId?: number | null
+  ): Promise<void> {
+    await connection.query<ResultSetHeader>(
+      `
+        UPDATE Field_Slots
+        SET Status = 'available',
+            BookingCode = NULL,
             HoldExpiresAt = NULL,
             QuantityID = IFNULL(?, QuantityID),
             UpdateAt = NOW()
@@ -231,49 +257,226 @@ const bookingModel = {
   /**
    * Create booking
    */
-  async createBooking(
+  async insertPendingBooking(
     connection: PoolConnection,
-    bookingCode: string,
-    fieldCode: number,
-    customerUserID: number | null,
-    customerName: string | null,
-    customerEmail: string | null,
-    customerPhone: string | null,
-    totalPrice: number,
-    notes: string | null,
-    paymentMethod: string
+    payload: {
+      fieldCode: number;
+      quantityId?: number | null;
+      customerUserID: number;
+      customerName?: string | null;
+      customerEmail?: string | null;
+      customerPhone?: string | null;
+      totalPrice: number;
+      platformFee: number;
+      netToShop: number;
+      discountAmount: number;
+      promotionId?: number | null;
+      promotionCode?: string | null;
+      checkinCode: string;
+    }
   ): Promise<number> {
     const [result] = await connection.query<ResultSetHeader>(
-      `
-        INSERT INTO Bookings (
-          BookingCode,
+      `INSERT INTO Bookings (
           FieldCode,
+          QuantityID,
           CustomerUserID,
           CustomerName,
           CustomerEmail,
           CustomerPhone,
           TotalPrice,
-          Notes,
-          PaymentMethod,
+          PlatformFee,
+          NetToShop,
+          DiscountAmount,
+          PromotionID,
+          PromotionCode,
+          CheckinCode,
           BookingStatus,
           PaymentStatus,
-          CreateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW())
-      `,
+          CreateAt,
+          UpdateAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
       [
-        bookingCode,
-        fieldCode,
-        customerUserID,
-        customerName,
-        customerEmail,
-        customerPhone,
-        totalPrice,
-        notes,
-        paymentMethod,
+        payload.fieldCode,
+        payload.quantityId ?? null,
+        payload.customerUserID,
+        payload.customerName || null,
+        payload.customerEmail || null,
+        payload.customerPhone || null,
+        payload.totalPrice,
+        payload.platformFee,
+        payload.netToShop,
+        payload.discountAmount,
+        payload.promotionId ?? null,
+        payload.promotionCode ?? null,
+        payload.checkinCode,
       ]
     );
 
-    return Number(result.insertId);
+    return Number((result as any).insertId);
+  },
+
+  async insertBookingSlotRecord(
+    connection: PoolConnection,
+    params: {
+      bookingCode: number;
+      fieldCode: number;
+      quantityId?: number | null;
+      playDate: string;
+      startTime: string;
+      endTime: string;
+      pricePerSlot: number;
+    }
+  ): Promise<void> {
+    await connection.query<ResultSetHeader>(
+      `INSERT INTO Booking_Slots (
+          BookingCode,
+          FieldCode,
+          QuantityID,
+          PlayDate,
+          StartTime,
+          EndTime,
+          PricePerSlot,
+          Status,
+          CreateAt,
+          UpdateAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
+      [
+        params.bookingCode,
+        params.fieldCode,
+        params.quantityId ?? null,
+        params.playDate,
+        params.startTime,
+        params.endTime,
+        params.pricePerSlot,
+      ]
+    );
+  },
+
+  async holdFieldSlot(
+    connection: PoolConnection,
+    params: {
+      fieldCode: number;
+      bookingCode: number;
+      quantityId?: number | null;
+      slot: NormalizedSlot;
+      holdExpiresAt: Date;
+      createdBy?: number | null;
+    }
+  ): Promise<void> {
+    if (params.quantityId !== null && params.quantityId !== undefined) {
+      const [updateResult] = await connection.query<ResultSetHeader>(
+        `UPDATE Field_Slots 
+           SET Status = 'held',
+               BookingCode = ?,
+               HoldExpiresAt = ?,
+               QuantityID = IFNULL(?, QuantityID),
+               UpdateAt = NOW()
+           WHERE FieldCode = ?
+             AND PlayDate = ?
+             AND StartTime = ?
+             AND EndTime = ?
+             AND (QuantityID = ? OR QuantityID IS NULL)`,
+        [
+          params.bookingCode,
+          params.holdExpiresAt,
+          params.quantityId,
+          params.fieldCode,
+          params.slot.db_date,
+          params.slot.db_start_time,
+          params.slot.db_end_time,
+          params.quantityId,
+        ]
+      );
+
+      if ((updateResult?.affectedRows ?? 0) === 0) {
+        await connection.query<ResultSetHeader>(
+          `INSERT INTO Field_Slots (
+               FieldCode,
+               QuantityID,
+               PlayDate,
+               StartTime,
+               EndTime,
+               Status,
+               BookingCode,
+               HoldExpiresAt,
+               CreatedBy,
+               CreateAt,
+               UpdateAt
+             )
+             VALUES (?, ?, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE
+               Status = 'held',
+               BookingCode = VALUES(BookingCode),
+               HoldExpiresAt = VALUES(HoldExpiresAt),
+               QuantityID = IFNULL(VALUES(QuantityID), QuantityID),
+               UpdateAt = NOW()`,
+          [
+            params.fieldCode,
+            params.quantityId,
+            params.slot.db_date,
+            params.slot.db_start_time,
+            params.slot.db_end_time,
+            params.bookingCode,
+            params.holdExpiresAt,
+            params.createdBy ?? null,
+          ]
+        );
+      }
+    } else {
+      const [updateResult] = await connection.query<ResultSetHeader>(
+        `UPDATE Field_Slots 
+           SET Status = 'held',
+               BookingCode = ?,
+               HoldExpiresAt = ?,
+               UpdateAt = NOW()
+           WHERE FieldCode = ?
+             AND PlayDate = ?
+             AND StartTime = ?
+             AND EndTime = ?
+             AND QuantityID IS NULL`,
+        [
+          params.bookingCode,
+          params.holdExpiresAt,
+          params.fieldCode,
+          params.slot.db_date,
+          params.slot.db_start_time,
+          params.slot.db_end_time,
+        ]
+      );
+
+      if ((updateResult?.affectedRows ?? 0) === 0) {
+        await connection.query<ResultSetHeader>(
+          `INSERT INTO Field_Slots (
+               FieldCode,
+               QuantityID,
+               PlayDate,
+               StartTime,
+               EndTime,
+               Status,
+               BookingCode,
+               HoldExpiresAt,
+               CreatedBy,
+               CreateAt,
+               UpdateAt
+             )
+             VALUES (?, NULL, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE
+               Status = 'held',
+               BookingCode = VALUES(BookingCode),
+               HoldExpiresAt = VALUES(HoldExpiresAt),
+               UpdateAt = NOW()`,
+          [
+            params.fieldCode,
+            params.slot.db_date,
+            params.slot.db_start_time,
+            params.slot.db_end_time,
+            params.bookingCode,
+            params.holdExpiresAt,
+            params.createdBy ?? null,
+          ]
+        );
+      }
+    }
   },
 
   /**
@@ -845,6 +1048,21 @@ const bookingModel = {
          AND BookingCode IN (?)`,
       [bookingCodes]
     );
+  },
+
+  async listStalePendingBookingCodes(shopCode: number): Promise<number[]> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT BookingCode
+         FROM Bookings
+         WHERE BookingStatus = 'pending'
+           AND TIMESTAMPDIFF(MINUTE, CreateAt, NOW()) > 10
+           AND FieldCode IN (SELECT FieldCode FROM Fields WHERE ShopCode = ?)`,
+      [shopCode]
+    );
+
+    return rows
+      .map((row) => Number(row.BookingCode))
+      .filter((code) => Number.isFinite(code) && code > 0);
   },
 };
 

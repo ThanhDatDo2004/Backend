@@ -1,12 +1,11 @@
-import { ResultSetHeader, RowDataPacket } from "mysql2";
-import { PoolConnection } from "mysql2/promise";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/apiErrors";
-import queryService from "./query";
 import shopPromotionService, {
   type ShopPromotion,
 } from "./shopPromotion.service";
 import bookingModel, {
+  type NormalizedSlot,
+  type SlotRow,
   type BookingSlotWithQuantityRow,
   type CustomerBookingRow,
   type ShopBookingFilters,
@@ -41,24 +40,6 @@ export type ConfirmBookingPayload = {
   promotion_code?: string;
   promotionCode?: string;
   isLoggedInCustomer?: boolean;
-};
-
-type NormalizedSlot = {
-  key: string;
-  slot_id?: number | null;
-  play_date: string;
-  start_time: string;
-  end_time: string;
-  db_date: string;
-  db_start_time: string;
-  db_end_time: string;
-};
-
-type SlotRow = RowDataPacket & {
-  SlotID: number;
-  Status: string;
-  HoldExpiresAt: string | null;
-  QuantityID: number | null;
 };
 
 export type ConfirmBookingResult = {
@@ -207,128 +188,6 @@ const generateCheckinCode = () => {
   // Generate unique checkin code: 6-8 alphanumeric
   return Math.random().toString(36).slice(2, 10).toUpperCase();
 };
-
-async function lockSlot(
-  connection: PoolConnection,
-  fieldCode: number,
-  slot: NormalizedSlot,
-  quantityId?: number | null
-): Promise<SlotRow | null> {
-  const params: any[] = [
-    fieldCode,
-    slot.db_date,
-    slot.db_start_time,
-    slot.db_end_time,
-  ];
-  let quantityClause = "";
-  if (quantityId !== null && quantityId !== undefined) {
-    quantityClause = " AND (QuantityID = ? OR QuantityID IS NULL)";
-    params.push(quantityId);
-  }
-  const [rows] = await connection.query<RowDataPacket[]>(
-    `
-      SELECT SlotID, Status, HoldExpiresAt, QuantityID
-      FROM Field_Slots
-      WHERE FieldCode = ?
-        AND PlayDate = ?
-        AND StartTime = ?
-        AND EndTime = ?
-        ${quantityClause}
-      FOR UPDATE
-    `,
-    params
-  );
-  return (rows?.[0] as SlotRow) ?? null;
-}
-
-async function updateExistingSlot(
-  connection: PoolConnection,
-  row: SlotRow,
-  slot: NormalizedSlot,
-  quantityId?: number | null
-) {
-  if (!row) return;
-
-  if (
-    quantityId !== null &&
-    quantityId !== undefined &&
-    row.QuantityID !== null &&
-    row.QuantityID !== quantityId
-  ) {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được giữ cho sân khác.`
-    );
-  }
-
-  // Check if slot is available OR if it's held but expired
-  if (row.Status === "held" && row.HoldExpiresAt) {
-    const holdExpiryTime = new Date(row.HoldExpiresAt);
-    const now = new Date();
-    if (now <= holdExpiryTime) {
-      // Hold is still valid, cannot book
-      throw new ApiError(
-        StatusCodes.CONFLICT,
-        `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
-      );
-    }
-    // Hold expired, can proceed
-  } else if (row.Status !== "available") {
-    throw new ApiError(
-      StatusCodes.CONFLICT,
-      `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
-    );
-  }
-
-  await connection.query<ResultSetHeader>(
-    `
-      UPDATE Field_Slots
-      SET Status = 'available',
-          BookingCode = NULL,
-          HoldExpiresAt = NULL,
-          QuantityID = IFNULL(?, QuantityID),
-          UpdateAt = NOW()
-      WHERE SlotID = ?
-    `,
-    [quantityId ?? null, row.SlotID]
-  );
-}
-
-async function insertNewSlot(
-  connection: PoolConnection,
-  fieldCode: number,
-  slot: NormalizedSlot,
-  quantityId?: number | null,
-  createdBy?: number | null
-): Promise<number> {
-  const [result] = await connection.query<ResultSetHeader>(
-    `
-      INSERT INTO Field_Slots (
-        FieldCode,
-        QuantityID,
-        PlayDate,
-        StartTime,
-        EndTime,
-        Status,
-        HoldExpiresAt,
-        CreatedBy
-      )
-      VALUES (?, ?, ?, ?, ?, 'available', NULL, ?)
-      ON DUPLICATE KEY UPDATE
-        SlotID = LAST_INSERT_ID(SlotID)
-    `,
-    [
-      fieldCode,
-      quantityId || null,
-      slot.db_date,
-      slot.db_start_time,
-      slot.db_end_time,
-      createdBy,
-    ]
-  );
-
-  return Number(result.insertId);
-}
 
 type ExpiredSlot = {
   slotId: number;
@@ -558,7 +417,7 @@ export async function confirmFieldBooking(
 
   let bookingCode: number = 0;
 
-  const transactionResult = await queryService.execTransaction<{
+  const transactionResult = await bookingModel.runInTransaction<{
     slots: ConfirmBookingResult["slots"];
     holdExpiresAt: Date;
   }>("confirmFieldBooking", async (connection) => {
@@ -567,7 +426,7 @@ export async function confirmFieldBooking(
 
     for (let index = 0; index < normalizedSlots.length; index += 1) {
       const slot = normalizedSlots[index];
-      const row = await lockSlot(
+      const row = await bookingModel.lockSlot(
         connection,
         fieldCode,
         slot,
@@ -575,7 +434,38 @@ export async function confirmFieldBooking(
       );
 
       if (row) {
-        await updateExistingSlot(connection, row, slot, quantityId ?? null);
+        if (
+          quantityId !== null &&
+          quantityId !== undefined &&
+          row.QuantityID !== null &&
+          row.QuantityID !== quantityId
+        ) {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được giữ cho sân khác.`
+          );
+        }
+
+        if (row.Status === "held" && row.HoldExpiresAt) {
+          const holdExpiryTime = new Date(row.HoldExpiresAt);
+          if (new Date() <= holdExpiryTime) {
+            throw new ApiError(
+              StatusCodes.CONFLICT,
+              `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
+            );
+          }
+        } else if (row.Status !== "available") {
+          throw new ApiError(
+            StatusCodes.CONFLICT,
+            `Khung giờ ${slot.start_time} - ${slot.end_time} ngày ${slot.play_date} đã được đặt trước đó.`
+          );
+        }
+
+        await bookingModel.resetSlotForBooking(
+          connection,
+          Number(row.SlotID),
+          quantityId ?? null
+        );
         const resolvedQuantityId =
           row.QuantityID !== null && row.QuantityID !== undefined
             ? Number(row.QuantityID)
@@ -588,7 +478,7 @@ export async function confirmFieldBooking(
           quantity_id: resolvedQuantityId,
         });
       } else {
-        const insertedId = await insertNewSlot(
+        const insertedId = await bookingModel.insertNewSlot(
           connection,
           fieldCode,
           slot,
@@ -619,182 +509,44 @@ export async function confirmFieldBooking(
     }
     const checkinCode = generateCheckinCode();
 
-    const [bookingResult] = await connection.query<ResultSetHeader>(
-      `INSERT INTO Bookings (
-          FieldCode,
-          QuantityID,
-          CustomerUserID,
-          CustomerName,
-          CustomerEmail,
-          CustomerPhone,
-          TotalPrice,
-          PlatformFee,
-          NetToShop,
-          DiscountAmount,
-          PromotionID,
-          PromotionCode,
-          CheckinCode,
-          BookingStatus,
-          PaymentStatus,
-          CreateAt,
-          UpdateAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'pending', NOW(), NOW())`,
-      [
-        fieldCode,
-        quantityId ?? null,
-        bookingUserId,
-        payload.customer?.name || null,
-        payload.customer?.email || null,
-        payload.customer?.phone || null,
-        finalTotalPrice,
-        platformFee,
-        netToShop,
-        discountAmount,
-        appliedPromotion?.promotion_id ?? null,
-        appliedPromotion?.promotion_code ?? null,
-        checkinCode,
-      ]
-    );
-
-    bookingCode = (bookingResult as any).insertId;
+    bookingCode = await bookingModel.insertPendingBooking(connection, {
+      fieldCode,
+      quantityId: quantityId ?? null,
+      customerUserID: bookingUserId,
+      customerName: payload.customer?.name || null,
+      customerEmail: payload.customer?.email || null,
+      customerPhone: payload.customer?.phone || null,
+      totalPrice: finalTotalPrice,
+      platformFee,
+      netToShop,
+      discountAmount,
+      promotionId: appliedPromotion?.promotion_id ?? null,
+      promotionCode: appliedPromotion?.promotion_code ?? null,
+      checkinCode,
+    });
 
     // 3. Tạo booking slots - MỘT ROW CHO MỖI KHUNG GIỜ
     const holdExpiryTime = createHoldExpiryDeadline();
     for (let index = 0; index < normalizedSlots.length; index += 1) {
       const slot = normalizedSlots[index];
-      // Insert vào Booking_Slots
-      await connection.query<ResultSetHeader>(
-        `INSERT INTO Booking_Slots (
-            BookingCode,
-            FieldCode,
-            QuantityID,
-            PlayDate,
-            StartTime,
-            EndTime,
-            PricePerSlot,
-            Status,
-            CreateAt,
-            UpdateAt
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NOW(), NOW())`,
-        [
-          bookingCode,
-          fieldCode,
-          quantityId ?? null,
-          slot.db_date,
-          slot.db_start_time,
-          slot.db_end_time,
-          slotPrices[index] ?? basePricePerSlot,
-        ]
-      );
+      await bookingModel.insertBookingSlotRecord(connection, {
+        bookingCode,
+        fieldCode,
+        quantityId: quantityId ?? null,
+        playDate: slot.db_date,
+        startTime: slot.db_start_time,
+        endTime: slot.db_end_time,
+        pricePerSlot: slotPrices[index] ?? basePricePerSlot,
+      });
 
-      // Update Field_Slots (để track sân - giữ nguyên)
-      if (quantityId !== null && quantityId !== undefined) {
-        const [updateResult] = await connection.query<ResultSetHeader>(
-          `UPDATE Field_Slots 
-             SET Status = 'held',
-                 BookingCode = ?,
-                 HoldExpiresAt = ?,
-                 QuantityID = IFNULL(?, QuantityID),
-                 UpdateAt = NOW()
-             WHERE FieldCode = ?
-               AND PlayDate = ?
-               AND StartTime = ?
-               AND EndTime = ?
-               AND (QuantityID = ? OR QuantityID IS NULL)`,
-          [
-            bookingCode,
-            holdExpiryTime,
-            quantityId,
-            fieldCode,
-            slot.db_date,
-            slot.db_start_time,
-            slot.db_end_time,
-            quantityId,
-          ]
-        );
-
-        if ((updateResult?.affectedRows ?? 0) === 0) {
-          await connection.query<ResultSetHeader>(
-            `INSERT INTO Field_Slots (
-                 FieldCode,
-                 QuantityID,
-                 PlayDate,
-                 StartTime,
-                 EndTime,
-                 Status,
-                 BookingCode,
-                 HoldExpiresAt,
-                 CreatedBy,
-                 CreateAt,
-                 UpdateAt
-               )
-               VALUES (?, ?, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
-               ON DUPLICATE KEY UPDATE
-                 Status = 'held',
-                 BookingCode = VALUES(BookingCode),
-                 HoldExpiresAt = VALUES(HoldExpiresAt),
-                 QuantityID = IFNULL(VALUES(QuantityID), QuantityID),
-                 UpdateAt = NOW()`,
-            [
-              fieldCode,
-              quantityId,
-              slot.db_date,
-              slot.db_start_time,
-              slot.db_end_time,
-              bookingCode,
-              holdExpiryTime,
-              payload.created_by ?? null,
-            ]
-          );
-        }
-      } else {
-        const [updateResult] = await connection.query<ResultSetHeader>(
-          `UPDATE Field_Slots 
-             SET Status = 'held', BookingCode = ?, HoldExpiresAt = ?, UpdateAt = NOW()
-             WHERE FieldCode = ? AND PlayDate = ? AND StartTime = ? AND EndTime = ?`,
-          [
-            bookingCode,
-            holdExpiryTime,
-            fieldCode,
-            slot.db_date,
-            slot.db_start_time,
-            slot.db_end_time,
-          ]
-        );
-
-        if ((updateResult?.affectedRows ?? 0) === 0) {
-          await connection.query<ResultSetHeader>(
-            `INSERT INTO Field_Slots (
-                 FieldCode,
-                 QuantityID,
-                 PlayDate,
-                 StartTime,
-                 EndTime,
-                 Status,
-                 BookingCode,
-                 HoldExpiresAt,
-                 CreatedBy,
-                 CreateAt,
-                 UpdateAt
-               )
-               VALUES (?, NULL, ?, ?, ?, 'held', ?, ?, ?, NOW(), NOW())
-               ON DUPLICATE KEY UPDATE
-                 Status = 'held',
-                 BookingCode = VALUES(BookingCode),
-                 HoldExpiresAt = VALUES(HoldExpiresAt),
-                 UpdateAt = NOW()`,
-            [
-              fieldCode,
-              slot.db_date,
-              slot.db_start_time,
-              slot.db_end_time,
-              bookingCode,
-              holdExpiryTime,
-              payload.created_by ?? null,
-            ]
-          );
-        }
-      }
+      await bookingModel.holdFieldSlot(connection, {
+        fieldCode,
+        bookingCode,
+        quantityId: quantityId ?? null,
+        slot,
+        holdExpiresAt: holdExpiryTime,
+        createdBy: payload.created_by ?? null,
+      });
     }
 
     const shouldPersistCart =
@@ -1304,18 +1056,7 @@ export async function cancelStalePendingBookingsForShop(shopCode: number) {
     return;
   }
 
-  const [rows] = await queryService.query<RowDataPacket[]>(
-    `SELECT BookingCode
-     FROM Bookings
-     WHERE BookingStatus = 'pending'
-       AND TIMESTAMPDIFF(MINUTE, CreateAt, NOW()) > 10
-       AND FieldCode IN (SELECT FieldCode FROM Fields WHERE ShopCode = ?)`,
-    [shopCode]
-  );
-
-  const codes = rows
-    .map((row) => Number(row.BookingCode))
-    .filter((code) => Number.isFinite(code) && code > 0);
+  const codes = await bookingModel.listStalePendingBookingCodes(shopCode);
 
   if (!codes.length) return;
 
