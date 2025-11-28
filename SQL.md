@@ -1,17 +1,3 @@
--- thuere.Admin_Bank_Accounts definition
-
-CREATE TABLE `Admin_Bank_Accounts` (
-`AdminBankID` int NOT NULL AUTO_INCREMENT,
-`BankName` varchar(120) NOT NULL,
-`AccountNumber` varchar(64) NOT NULL,
-`AccountHolder` varchar(120) NOT NULL,
-`IsActive` char(1) DEFAULT 'Y',
-`IsDefault` char(1) DEFAULT 'Y',
-`CreateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-`UpdateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-PRIMARY KEY (`AdminBankID`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 -- thuere.Shop_Request_Inbox definition
 
 CREATE TABLE `Shop_Request_Inbox` (
@@ -24,22 +10,7 @@ CREATE TABLE `Shop_Request_Inbox` (
 `Status` enum('pending','reviewed','approved','rejected') NOT NULL DEFAULT 'pending',
 `CreatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 PRIMARY KEY (`RequestID`)
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- thuere.System_Settings definition
-
-CREATE TABLE `System_Settings` (
-`SettingID` int NOT NULL AUTO_INCREMENT,
-`SettingKey` varchar(100) NOT NULL,
-`SettingValue` text,
-`SettingType` enum('string','number','boolean','json') DEFAULT 'string',
-`Description` varchar(255) DEFAULT NULL,
-`UpdatedBy` int DEFAULT NULL,
-`UpdateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-PRIMARY KEY (`SettingID`),
-UNIQUE KEY `SettingKey` (`SettingKey`),
-KEY `IDX_Settings_Key` (`SettingKey`)
-) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Users_Level definition
 
@@ -69,7 +40,7 @@ PRIMARY KEY (`UserID`),
 UNIQUE KEY `UK_Users_Email` (`Email`),
 KEY `IDX_Users_Level` (`LevelCode`),
 CONSTRAINT `FK_Users_Level` FOREIGN KEY (`LevelCode`) REFERENCES `Users_Level` (`LevelCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=25 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Shops definition
 
@@ -78,18 +49,19 @@ CREATE TABLE `Shops` (
 `UserID` int NOT NULL,
 `ShopName` varchar(255) NOT NULL,
 `Address` varchar(255) DEFAULT NULL,
+`PhoneNumber` varchar(20) DEFAULT NULL,
+`OpeningTime` time DEFAULT NULL,
+`ClosingTime` time DEFAULT NULL,
+`IsOpen24Hours` char(1) NOT NULL DEFAULT 'N',
 `IsApproved` char(1) NOT NULL DEFAULT 'N',
 `ApprovedAt` datetime DEFAULT NULL,
-`ApprovedBy` int DEFAULT NULL,
 `CreateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
 `UpdateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 PRIMARY KEY (`ShopCode`),
-KEY `FK_Shops_ApprovedBy` (`ApprovedBy`),
 KEY `IDX_Shops_UserID` (`UserID`),
 KEY `IDX_Shops_IsApproved` (`IsApproved`),
-CONSTRAINT `FK_Shops_ApprovedBy` FOREIGN KEY (`ApprovedBy`) REFERENCES `Users` (`UserID`),
 CONSTRAINT `FK_Shops_User` FOREIGN KEY (`UserID`) REFERENCES `Users` (`UserID`)
-) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Fields definition
 
@@ -107,7 +79,7 @@ CREATE TABLE `Fields` (
 PRIMARY KEY (`FieldCode`),
 KEY `FK_Fields_Shops` (`ShopCode`),
 CONSTRAINT `FK_Fields_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=71 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=73 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Shop_Bank_Accounts definition
 
@@ -124,7 +96,7 @@ CREATE TABLE `Shop_Bank_Accounts` (
 PRIMARY KEY (`ShopBankID`),
 KEY `FK_ShopBankAccounts_Shops` (`ShopCode`),
 CONSTRAINT `FK_ShopBankAccounts_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=20 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=49 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Shop_Promotions definition
 
@@ -143,6 +115,8 @@ CREATE TABLE `Shop_Promotions` (
 `StartAt` datetime NOT NULL,
 `EndAt` datetime NOT NULL,
 `Status` enum('draft','scheduled','active','expired','disabled') NOT NULL DEFAULT 'draft',
+`IsDeleted` tinyint(1) NOT NULL DEFAULT '0',
+`DeletedAt` datetime DEFAULT NULL,
 `CreatedBy` int DEFAULT NULL,
 `CreateAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 `UpdateAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -150,6 +124,7 @@ PRIMARY KEY (`PromotionID`),
 UNIQUE KEY `UQ_ShopPromotions_PromotionCode` (`PromotionCode`),
 KEY `IDX_ShopPromotions_ShopCode` (`ShopCode`),
 KEY `IDX_ShopPromotions_Shop_Status_EndAt` (`ShopCode`,`Status`,`EndAt`),
+KEY `IDX_ShopPromotions_IsDeleted` (`IsDeleted`),
 KEY `IDX_ShopPromotions_CreatedBy` (`CreatedBy`),
 CONSTRAINT `FK_ShopPromotions_CreatedBy` FOREIGN KEY (`CreatedBy`) REFERENCES `Users` (`UserID`) ON DELETE SET NULL ON UPDATE CASCADE,
 CONSTRAINT `FK_ShopPromotions_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -160,7 +135,7 @@ CONSTRAINT `CHK_PercentCap` CHECK (((`DiscountType` = \_utf8mb4'fixed') or ((`Di
 CONSTRAINT `CHK_TimeRange` CHECK ((`StartAt` < `EndAt`)),
 CONSTRAINT `CHK_UsageLimit` CHECK (((`UsageLimit` is null) or (`UsageLimit` >= 0))),
 CONSTRAINT `CHK_UsagePerCustomer` CHECK ((`UsagePerCustomer` >= 1))
-) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Shop_Utilities definition
 
@@ -174,7 +149,7 @@ CREATE TABLE `Shop_Utilities` (
 PRIMARY KEY (`ShopUtilityID`),
 UNIQUE KEY `uniq_shop_utility` (`ShopCode`,`UtilityID`),
 CONSTRAINT `FK_ShopUtilities_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=42 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- thuere.Shop_Wallets definition
 
@@ -199,7 +174,7 @@ CREATE TABLE `Field_Images` (
 PRIMARY KEY (`ImageCode`),
 KEY `FK_FieldImages_Fields` (`FieldCode`),
 CONSTRAINT `FK_FieldImages_Fields` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`FieldCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=41 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=50 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Field_Pricing definition
 
@@ -216,7 +191,7 @@ PRIMARY KEY (`PricingID`),
 KEY `FK_FieldPricing_Fields` (`FieldCode`),
 CONSTRAINT `FK_FieldPricing_Fields` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`FieldCode`),
 CONSTRAINT `CHK_FieldPricing_Time` CHECK ((`StartTime` < `EndTime`))
-) ENGINE=InnoDB AUTO_INCREMENT=72 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=77 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Field_Quantity definition
 
@@ -231,7 +206,7 @@ PRIMARY KEY (`QuantityID`),
 UNIQUE KEY `UniqueFieldQuantity` (`FieldCode`,`QuantityNumber`),
 KEY `IdxFieldCodeStatus` (`FieldCode`,`Status`),
 CONSTRAINT `Field_Quantity_ibfk_1` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`FieldCode`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=37 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=54 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- thuere.Payout_Requests definition
 
@@ -254,7 +229,23 @@ KEY `FK_PayoutRequests_Shops` (`ShopCode`),
 KEY `FK_PayoutRequests_Banks` (`ShopBankID`),
 CONSTRAINT `FK_PayoutRequests_Banks` FOREIGN KEY (`ShopBankID`) REFERENCES `Shop_Bank_Accounts` (`ShopBankID`),
 CONSTRAINT `FK_PayoutRequests_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=19 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- thuere.Booking_Carts definition
+
+CREATE TABLE `Booking_Carts` (
+`CartID` int NOT NULL AUTO_INCREMENT,
+`UserID` int NOT NULL,
+`BookingCode` int NOT NULL,
+`ExpiresAt` datetime NOT NULL,
+`CreatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`UpdatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (`CartID`),
+UNIQUE KEY `UK_BookingCarts_Booking` (`BookingCode`),
+KEY `IDX_BookingCarts_User` (`UserID`,`ExpiresAt`),
+CONSTRAINT `FK_BookingCarts_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE,
+CONSTRAINT `FK_BookingCarts_Users` FOREIGN KEY (`UserID`) REFERENCES `Users` (`UserID`)
+) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Booking_Slots definition
 
@@ -278,7 +269,7 @@ KEY `IDX_BookingSlots_QuantityID` (`QuantityID`),
 CONSTRAINT `Booking_Slots_ibfk_1` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE,
 CONSTRAINT `FK_BookingSlots_Fields` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`FieldCode`),
 CONSTRAINT `FK_BookingSlots_QuantityID` FOREIGN KEY (`QuantityID`) REFERENCES `Field_Quantity` (`QuantityID`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=226 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=284 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- thuere.Bookings definition
 
@@ -318,23 +309,7 @@ CONSTRAINT `FK_Bookings_Fields` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`
 CONSTRAINT `FK_Bookings_Payments` FOREIGN KEY (`PaymentID`) REFERENCES `Payments_Admin` (`PaymentID`),
 CONSTRAINT `FK_Bookings_Promotions` FOREIGN KEY (`PromotionID`) REFERENCES `Shop_Promotions` (`PromotionID`),
 CONSTRAINT `FK_Bookings_Users` FOREIGN KEY (`CustomerUserID`) REFERENCES `Users` (`UserID`)
-) ENGINE=InnoDB AUTO_INCREMENT=203 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- thuere.Booking_Carts definition
-
-CREATE TABLE `Booking_Carts` (
-`CartID` int NOT NULL AUTO_INCREMENT,
-`UserID` int NOT NULL,
-`BookingCode` int NOT NULL,
-`ExpiresAt` datetime NOT NULL,
-`CreatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-`UpdatedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-PRIMARY KEY (`CartID`),
-UNIQUE KEY `UK_BookingCarts_Booking` (`BookingCode`),
-KEY `IDX_BookingCarts_User` (`UserID`,`ExpiresAt`),
-CONSTRAINT `FK_BookingCarts_Users` FOREIGN KEY (`UserID`) REFERENCES `Users` (`UserID`),
-CONSTRAINT `FK_BookingCarts_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=242 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Field_Slots definition
 
@@ -362,7 +337,7 @@ CONSTRAINT `Field_Slots_ibfk_1` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings
 CONSTRAINT `FK_Field_Slots_Quantity` FOREIGN KEY (`QuantityID`) REFERENCES `Field_Quantity` (`QuantityID`) ON DELETE SET NULL,
 CONSTRAINT `FK_FieldSlots_CreatedBy` FOREIGN KEY (`CreatedBy`) REFERENCES `Users` (`UserID`),
 CONSTRAINT `FK_FieldSlots_Fields` FOREIGN KEY (`FieldCode`) REFERENCES `Fields` (`FieldCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=141 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=193 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- thuere.Payment_Logs definition
 
@@ -379,19 +354,16 @@ CREATE TABLE `Payment_Logs` (
 PRIMARY KEY (`LogID`),
 KEY `FK_PaymentLogs_Payments` (`PaymentID`),
 CONSTRAINT `FK_PaymentLogs_Payments` FOREIGN KEY (`PaymentID`) REFERENCES `Payments_Admin` (`PaymentID`)
-) ENGINE=InnoDB AUTO_INCREMENT=67 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=79 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Payments_Admin definition
 
 CREATE TABLE `Payments_Admin` (
 `PaymentID` int NOT NULL AUTO_INCREMENT,
 `BookingCode` int NOT NULL,
-`AdminBankID` int NOT NULL,
 `PaymentMethod` enum('bank_transfer','card','ewallet','cash') DEFAULT 'bank_transfer',
 `Amount` decimal(14,2) NOT NULL,
-`TransactionCode` varchar(64) DEFAULT NULL,
 `MomoTransactionID` varchar(64) DEFAULT NULL,
-`MomoRequestID` varchar(64) DEFAULT NULL,
 `PaidAt` datetime DEFAULT NULL,
 `PaymentStatus` enum('pending','paid','failed','refunded') DEFAULT 'pending',
 `CreateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -399,12 +371,10 @@ CREATE TABLE `Payments_Admin` (
 PRIMARY KEY (`PaymentID`),
 UNIQUE KEY `MomoTransactionID` (`MomoTransactionID`),
 KEY `FK_PaymentsAdmin_Bookings` (`BookingCode`),
-KEY `FK_PaymentsAdmin_AdminBank` (`AdminBankID`),
 KEY `IDX_Payments_Status` (`PaymentStatus`),
 KEY `IDX_Payments_CreateAt` (`CreateAt` DESC),
-CONSTRAINT `FK_PaymentsAdmin_AdminBank` FOREIGN KEY (`AdminBankID`) REFERENCES `Admin_Bank_Accounts` (`AdminBankID`),
 CONSTRAINT `FK_PaymentsAdmin_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`)
-) ENGINE=InnoDB AUTO_INCREMENT=162 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=205 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- thuere.Wallet_Transactions definition
 
@@ -426,4 +396,4 @@ KEY `IDX_WalletTxn_Type` (`Type`),
 CONSTRAINT `FK_WalletTransactions_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`),
 CONSTRAINT `FK_WalletTransactions_Wallet` FOREIGN KEY (`ShopCode`) REFERENCES `Shop_Wallets` (`ShopCode`),
 CONSTRAINT `FK_WalletTxn_Payout` FOREIGN KEY (`PayoutID`) REFERENCES `Payout_Requests` (`PayoutID`)
-) ENGINE=InnoDB AUTO_INCREMENT=58 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=70 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
