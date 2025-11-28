@@ -58,10 +58,7 @@ function ensureBookingAccess(
 }
 
 const paymentController = {
-  /**
-   * Khởi tạo thanh toán (không gọi Momo - chuẩn bị cho SePay)
-   * POST /api/payments/bookings/:bookingCode/initiate
-   */
+  
   async initiatePayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
@@ -269,10 +266,7 @@ const paymentController = {
     }
   },
 
-  /**
-   * Check payment status - wait for SePay webhook
-   * GET /api/payments/bookings/:bookingCode/verify
-   */
+
   async verifyPayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
@@ -553,10 +547,7 @@ const paymentController = {
     }
   },
 
-  /**
-   * Lấy kết quả thanh toán (sau khi thanh toán hoàn tất)
-   * GET /api/payments/result/:bookingCode
-   */
+ 
   async getPaymentResult(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;

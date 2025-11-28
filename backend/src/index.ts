@@ -54,6 +54,7 @@ const corsOptions: cors.CorsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.use(express.urlencoded({ extended: true })); // SePay gửi form-encoded
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(
