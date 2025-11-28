@@ -21,9 +21,33 @@ import { cleanupExpiredHeldSlots } from "./services/booking.service";
 
 
 const app = express();
-const allowedOrigins = ["http://localhost:5173"];
+const defaultAllowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://thuere.site",
+  "https://www.thuere.site",
+  "http://thuere.site",
+];
+
+const allowedOrigins = (
+  process.env.CORS_ALLOWED_ORIGINS || defaultAllowedOrigins.join(",")
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 const corsOptions: cors.CorsOptions = {
-  origin: allowedOrigins,
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   credentials: false, 
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], 
   allowedHeaders: ["Content-Type", "Authorization"], 

@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { resolveFrontendBaseUrl } from "../utils/env";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -71,7 +72,7 @@ export async function sendBookingConfirmationEmail(
   timeSlot: string
 ) {
   const appName = process.env.APP_NAME || "ThueRe";
-  const appUrl = process.env.APP_URL || "http://localhost:5173";
+  const appUrl = resolveFrontendBaseUrl();
 
   const info = await transporter.sendMail({
     from: `"${appName}" <${process.env.GMAIL_USER}>`,

@@ -12,6 +12,7 @@ import {
   sendVerificationEmail,
   sendResetPasswordEmail,
 } from "../services/mail.service";
+import { resolveFrontendBaseUrl } from "../utils/env";
 
 const otpStore = new Map<string, { code: string; expiresAt: number }>();
 const OTP_TTL_MS = 15 * 60 * 1000;
@@ -171,7 +172,7 @@ const authController = {
       expiresIn: `${ttlMin}m`,
     });
 
-    const frontend = process.env.FRONTEND_URL || "http://localhost:5173";
+    const frontend = resolveFrontendBaseUrl();
     const resetLink = `${frontend}/reset-password?token=${encodeURIComponent(
       token
     )}`;
