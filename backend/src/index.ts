@@ -122,6 +122,23 @@ app.use(
   })
 );
 
+// Basic health/status endpoints for root domain checks
+app.get("/", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    message: "Thuere API is running",
+    docs: "/api",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get("/healthz", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Error handler
 app.use(errorHandlingMiddleware);
 
