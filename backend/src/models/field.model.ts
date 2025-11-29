@@ -301,9 +301,7 @@ const fieldModel = {
       ${clause}
     `;
     const rows = await queryService.execQueryList(query, params);
-    return rows
-      .map((row: { address?: string | null }) => row.address ?? "")
-      .filter(Boolean);
+    return rows.map((row) => (row as any).address ?? "").filter(Boolean);
   },
 
   async listSportTypes(filters: FieldFilters): Promise<string[]> {
@@ -317,9 +315,7 @@ const fieldModel = {
       ORDER BY f.SportType
     `;
     const rows = await queryService.execQueryList(query, params);
-    return rows
-      .map((row: { sport_type?: string | null }) => row.sport_type ?? "")
-      .filter(Boolean);
+    return rows.map((row) => (row as any).sport_type ?? "").filter(Boolean);
   },
 
   async listImages(fieldCodes: number[]) {
@@ -596,8 +592,6 @@ const fieldModel = {
       }
     );
   },
-
- 
 
   async insertField(
     conn: PoolConnection,

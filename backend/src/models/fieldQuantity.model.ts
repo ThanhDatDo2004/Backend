@@ -356,9 +356,7 @@ const fieldQuantityModel = {
       fieldCode,
       limit,
     ]);
-    return rows.map(
-      (row: { quantity_id: number }) => Number(row.quantity_id ?? 0)
-    );
+    return rows.map((row) => Number((row as any).quantity_id ?? 0));
   },
 
   async deleteByIds(quantityIds: number[]) {

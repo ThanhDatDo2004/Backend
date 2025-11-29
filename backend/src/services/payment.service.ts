@@ -4,42 +4,61 @@ import paymentModel from "../models/payment.model";
 import { sendBookingConfirmationEmail } from "./mail.service";
 import cartService from "./cart.service";
 
-const PLATFORM_FEE_PERCENT = 5; // 5% admin fee
-const SHOP_EARNING_PERCENT = 95; // 95% shop earning
+const PLATFORM_FEE_PERCENT = 5;
+const SHOP_EARNING_PERCENT = 95;
+
+type PaymentRow = {
+  PaymentID: number;
+  BookingCode: number;
+  Amount: number;
+  PaymentStatus: string;
+};
+
+type BookingRow = {
+  ShopCode: number;
+  FieldCode: number;
+  BookingStatus?: string;
+};
 
 /**
- * Tính toán phí và số tiền shop nhận
+ * Tính toán phí
  */
 export function calculateFees(totalPrice: number) {
-  const platformFee = parseFloat(
-    ((totalPrice * PLATFORM_FEE_PERCENT) / 100).toFixed(2)
-  );
-  const netToShop = parseFloat((totalPrice - platformFee).toFixed(2));
+  const platformFee = +(totalPrice * PLATFORM_FEE_PERCENT / 100).toFixed(2);
+  const netToShop = +(totalPrice - platformFee).toFixed(2);
+
   return {
-    totalPrice: parseFloat(totalPrice.toFixed(2)),
+    totalPrice: +totalPrice.toFixed(2),
     platformFee,
     netToShop,
   };
 }
 
 /**
- * Tạo payment record khi khách chọn thanh toán
+ * Tạo record payment
  */
 export async function initiatePayment(
   bookingCode: string | number,
   totalPrice: number,
   paymentMethod: string = "bank_transfer"
 ) {
+  const bCode = Number(bookingCode);
+
+  if (!Number.isFinite(bCode)) {
+    throw new ApiError(StatusCodes.BAD_REQUEST, "BookingCode không hợp lệ");
+  }
+
   const fees = calculateFees(totalPrice);
+
   const payment = await paymentModel.create(
-    bookingCode,
+    bCode,
     fees.totalPrice,
     paymentMethod
   );
 
   return {
     paymentID: payment.PaymentID,
-    bookingCode,
+    bookingCode: bCode,
     amount: fees.totalPrice,
     platformFee: fees.platformFee,
     netToShop: fees.netToShop,
@@ -48,36 +67,18 @@ export async function initiatePayment(
 }
 
 /**
- * Lấy chi tiết payment
+ * Get payment info
  */
 export async function getPaymentByID(paymentID: number) {
   return await paymentModel.getById(paymentID);
 }
 
-/**
- * Tìm payment bằng MomoTransactionID (transId từ webhook)
- */
-export async function getPaymentByMomoTransactionID(momoTransactionID: string) {
-  return await paymentModel.getByMomoTransactionID(momoTransactionID);
-}
-
-/**
- * Tìm payment bằng MomoOrderId (orderId từ Momo)
- */
-export async function getPaymentByMomoOrderId(momoOrderId: string) {
-  return await paymentModel.getByMomoOrderId(momoOrderId);
-}
-
-/**
- * Lấy payment từ booking
- */
 export async function getPaymentByBookingCode(bookingCode: string | number) {
-  return await paymentModel.getByBookingCode(bookingCode);
+  const code = Number(bookingCode);
+  if (!Number.isFinite(code)) return null;
+  return await paymentModel.getByBookingCode(code);
 }
 
-/**
- * Cập nhật payment status từ webhook Momo
- */
 export async function updatePaymentStatus(
   paymentID: number,
   status: "paid" | "failed" | "refunded",
@@ -93,75 +94,63 @@ export async function updatePaymentStatus(
 }
 
 /**
- * Xử lý payment success - cập nhật wallet + booking status
+ * Payment Success
  */
 export async function handlePaymentSuccess(paymentID: number) {
-  // Lấy payment info
-  const payment = await paymentModel.getById(paymentID);
+  const payment = (await paymentModel.getById(paymentID)) as PaymentRow | null;
+
   if (!payment) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment");
   }
 
-  // Lấy booking info
-  const bookingInfo = await paymentModel.getBookingInfoByPaymentId(paymentID);
+  const bookingInfo = (await paymentModel.getBookingInfoByPaymentId(
+    paymentID
+  )) as BookingRow | null;
+
   if (!bookingInfo) {
     throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking");
   }
 
   const wasAlreadyConfirmed = bookingInfo.BookingStatus === "confirmed";
 
-  // Cập nhật payment status
   await paymentModel.updateStatus(paymentID, "paid");
 
-  // Cập nhật booking status
   await paymentModel.confirmBooking(payment.BookingCode, paymentID);
 
   const bookingCodeNumeric = Number(payment.BookingCode);
-  if (
-    Number.isFinite(bookingCodeNumeric) &&
-    bookingCodeNumeric > 0
-  ) {
+  if (Number.isFinite(bookingCodeNumeric)) {
     await cartService.removeEntriesForBookings([bookingCodeNumeric]);
   }
 
-  // Update Booking_Slots - change status from 'pending' to 'booked'
   await paymentModel.updateBookingSlotsToBooked(payment.BookingCode);
 
-  // Lock Field_Slots - change status from 'held' to 'booked'
   await paymentModel.updateFieldSlotsToBooked(payment.BookingCode);
 
-  // Lấy booking để tính netToShop
-  const shopCode = bookingInfo.ShopCode;
   const fees = calculateFees(payment.Amount);
 
-  // Cập nhật wallet shop
-  await paymentModel.creditShopWallet(shopCode, fees.netToShop);
+  await paymentModel.creditShopWallet(bookingInfo.ShopCode, fees.netToShop);
 
-  // ✅ Increase field rent only if booking was not confirmed before
   if (!wasAlreadyConfirmed) {
     await paymentModel.incrementFieldRent(bookingInfo.FieldCode);
   }
 
-  // Tạo wallet transaction
   await paymentModel.createWalletTransaction(
-    shopCode,
+    bookingInfo.ShopCode,
     payment.BookingCode,
     "credit_settlement",
     fees.netToShop,
     "Payment from booking"
   );
 
-  // Gửi email xác nhận đặt lịch
-  if (payment.BookingCode) {
-    try {
+  // Email gửi sau thanh toán
+  try {
+    if (payment.BookingCode) {
       const bookingSlot = await paymentModel.getBookingSlotForEmail(
         payment.BookingCode
       );
 
       if (bookingSlot) {
-        const playDateStr = new Date(bookingSlot.PlayDate).toLocaleDateString(
-          "vi-VN"
-        );
+        const playDateStr = new Date(bookingSlot.PlayDate).toLocaleDateString("vi-VN");
         const timeSlot = `${bookingSlot.StartTime} - ${bookingSlot.EndTime}`;
 
         await sendBookingConfirmationEmail(
@@ -173,10 +162,9 @@ export async function handlePaymentSuccess(paymentID: number) {
           timeSlot
         );
       }
-    } catch (e) {
-      console.error("Lỗi gửi email xác nhận:", e);
-      // Không throw, tiếp tục xử lý
     }
+  } catch (e) {
+    console.error("Lỗi gửi email:", e);
   }
 
   return {
@@ -189,9 +177,6 @@ export async function handlePaymentSuccess(paymentID: number) {
   };
 }
 
-/**
- * Lưu log payment (từ webhook)
- */
 export async function logPaymentAction(
   paymentID: number,
   action: string,
@@ -201,7 +186,7 @@ export async function logPaymentAction(
   resultCode?: number,
   resultMessage?: string
 ) {
-  await paymentModel.logAction(
+  return await paymentModel.logAction(
     paymentID,
     action,
     requestData,
@@ -212,30 +197,15 @@ export async function logPaymentAction(
   );
 }
 
-/**
- * Release held slots when payment fails or hold expires
- */
-export async function releaseHeldSlots(bookingCode: string | number) {
-  // Note: This is handled by booking.model in the booking flow
-  // But keeping it here for backward compatibility
-}
-
 export async function getBookingOwnershipInfo(bookingCode: number) {
   return await paymentModel.getBookingOwnershipInfo(bookingCode);
 }
 
-export async function hasPaymentLog(
-  paymentID: number,
-  action: string,
-  externalId?: string
-) {
+export async function hasPaymentLog(paymentID: number, action: string, externalId?: string) {
   return await paymentModel.hasPaymentLog(paymentID, action, externalId);
 }
 
-export async function hasWebhookLogByExternalId(
-  action: string,
-  externalId: string
-) {
+export async function hasWebhookLogByExternalId(action: string, externalId: string) {
   return await paymentModel.hasWebhookLogByExternalId(action, externalId);
 }
 
@@ -259,7 +229,6 @@ const paymentService = {
   updatePaymentStatus,
   handlePaymentSuccess,
   logPaymentAction,
-  releaseHeldSlots,
   getBookingOwnershipInfo,
   hasPaymentLog,
   hasWebhookLogByExternalId,

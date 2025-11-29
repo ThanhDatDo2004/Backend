@@ -47,7 +47,7 @@ const shopPromotionModel = {
       [shopCode]
     );
 
-    return (rows || []) as ShopPromotionRow[];
+    return (rows as unknown as ShopPromotionRow[]) || [];
   },
 
   /**
@@ -72,7 +72,7 @@ const shopPromotionModel = {
       [promotionId, shopCode, promotionId]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as unknown as ShopPromotionRow) || null;
   },
 
   /**
@@ -91,8 +91,8 @@ const shopPromotionModel = {
       min_order_amount: number | null;
       usage_limit: number | null;
       usage_per_customer: number | null;
-      start_at: string; // MySQL datetime format
-      end_at: string; // MySQL datetime format
+      start_at: string;
+      end_at: string;
       status: string;
     }
   ): Promise<number> {
@@ -135,7 +135,7 @@ const shopPromotionModel = {
   },
 
   /**
-   * Check if promotion code exists (within transaction)
+   * Check code exists
    */
   async codeExists(
     connection: PoolConnection,
@@ -158,7 +158,7 @@ const shopPromotionModel = {
   },
 
   /**
-   * Update promotion (within transaction)
+   * Update promotion
    */
   async update(
     connection: PoolConnection,
@@ -215,7 +215,7 @@ const shopPromotionModel = {
   },
 
   /**
-   * Update promotion status
+   * Update status
    */
   async updateStatus(
     shopCode: number,
@@ -231,7 +231,7 @@ const shopPromotionModel = {
   },
 
   /**
-   * Get active promotions for shop (with optional customer usage)
+   * Get active promotions for shop
    */
   async getActiveForShop(
     shopCode: number,
@@ -257,9 +257,7 @@ const shopPromotionModel = {
     const [rows] = await queryService.query<RowDataPacket[]>(
       `SELECT p.*,
               COALESCE(b.TotalUsage, 0) AS UsageCount,
-              ${
-                customerJoin ? "COALESCE(c.CustomerUsage, 0)" : "0"
-              } AS CustomerUsage
+              ${customerJoin ? "COALESCE(c.CustomerUsage, 0)" : "0"} AS CustomerUsage
        FROM Shop_Promotions p
        LEFT JOIN (
          SELECT PromotionID, COUNT(*) AS TotalUsage
@@ -278,11 +276,11 @@ const shopPromotionModel = {
       params
     );
 
-    return (rows || []) as ShopPromotionRow[];
+    return (rows as unknown as ShopPromotionRow[]) || [];
   },
 
   /**
-   * Get promotion by code
+   * Get by code
    */
   async getByCode(promotionCode: string): Promise<ShopPromotionRow | null> {
     const normalized = promotionCode.trim().toUpperCase();
@@ -303,11 +301,11 @@ const shopPromotionModel = {
       [normalized]
     );
 
-    return rows?.[0] || null;
+    return (rows?.[0] as unknown as ShopPromotionRow) || null;
   },
 
   /**
-   * Check if promotion is referenced by unpaid/pending bookings
+   * Check linked pending bookings
    */
   async hasPendingUnpaidBookings(promotionId: number): Promise<boolean> {
     const [rows] = await queryService.query<RowDataPacket[]>(
@@ -319,7 +317,7 @@ const shopPromotionModel = {
       [promotionId]
     );
 
-    return Number(rows?.[0]?.Cnt ?? 0) > 0;
+    return Number((rows?.[0] as any)?.Cnt ?? 0) > 0;
   },
 
   /**

@@ -1,7 +1,7 @@
 import fieldQuantityModel, {
   AvailableQuantityRow,
 } from "../models/fieldQuantity.model";
-import { ApiError } from "http-errors";
+import ApiError from "../utils/apiErrors";
 import { StatusCodes } from "http-status-codes";
 import { releaseExpiredHeldSlots } from "./booking.service";
 

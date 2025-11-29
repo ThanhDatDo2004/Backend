@@ -1,19 +1,14 @@
-import { RowDataPacket, ResultSetHeader } from "mysql2";
+import { RowDataPacket, ResultSetHeader, FieldPacket } from "mysql2";
 import { PoolConnection } from "mysql2/promise";
 import pool from "../configs/db.config";
-import { IError } from "../interfaces/common";
 
 const queryService = {
-  execQueryList: async (query: string, params: any[]): Promise<any[]> => {
+  execQueryList: async (query: string, params: any[]): Promise<RowDataPacket[]> => {
     try {
       const [rows] = await pool.query<RowDataPacket[]>(query, params);
       return rows;
     } catch (error: unknown) {
-      console.error("❌ execQueryList error:", {
-        query,
-        params,
-        error: (error as Error).message,
-      });
+      console.error("❌ execQueryList error:", { query, params, error });
       throw error;
     }
   },
@@ -21,30 +16,19 @@ const queryService = {
   execQueryCnt: async (query: string, params: any[]): Promise<number> => {
     try {
       const [rows] = await pool.query<RowDataPacket[]>(query, params);
-      return parseInt(rows[0]?.cnt) ?? 0;
+      return Number((rows[0] as any)?.cnt) || 0;
     } catch (error: unknown) {
-      console.error("❌ execQueryCnt error:", {
-        query,
-        params,
-        error: (error as Error).message,
-      });
+      console.error("❌ execQueryCnt error:", { query, params, error });
       throw error;
     }
   },
 
-  execQueryOne: async (
-    query: string,
-    params: any[]
-  ): Promise<object | null> => {
+  execQueryOne: async (query: string, params: any[]): Promise<RowDataPacket | null> => {
     try {
       const [rows] = await pool.query<RowDataPacket[]>(query, params);
       return rows[0] ?? null;
     } catch (error: unknown) {
-      console.error("❌ execQueryOne error:", {
-        query,
-        params,
-        error: (error as Error).message,
-      });
+      console.error("❌ execQueryOne error:", { query, params, error });
       throw error;
     }
   },
@@ -54,30 +38,24 @@ const queryService = {
       const [result] = await pool.query<ResultSetHeader>(query, params);
       return result;
     } catch (error: unknown) {
-      console.error("❌ execQuery error:", {
-        query,
-        params,
-        error: (error as Error).message,
-      });
+      console.error("❌ execQuery error:", { query, params, error });
       throw error;
     }
   },
 
-  // Generic query method for both SELECT and INSERT/UPDATE/DELETE
-  query: async <T extends RowDataPacket[] | ResultSetHeader>(
-    query: string,
-    params: any[]
-  ): Promise<
-    [T extends RowDataPacket[] ? RowDataPacket[] : ResultSetHeader, any]
-  > => {
+  /**
+   * Generic query method
+   * - SELECT → RowDataPacket[]
+   * - INSERT/UPDATE/DELETE → ResultSetHeader
+   */
+  query: async <
+    T extends RowDataPacket[] | ResultSetHeader
+  >(query: string, params: any[]): Promise<[T, FieldPacket[]]> => {
     try {
-      return await pool.query<T>(query, params);
+      const [rows, fields] = await pool.query<any>(query, params);
+      return [rows as T, fields];
     } catch (error: unknown) {
-      console.error("❌ query error:", {
-        query,
-        params,
-        error: (error as Error).message,
-      });
+      console.error("❌ query error:", { query, params, error });
       throw error;
     }
   },
@@ -87,6 +65,7 @@ const queryService = {
     callback: (conn: PoolConnection) => Promise<T>
   ): Promise<T> => {
     const connection = await pool.getConnection();
+
     try {
       await connection.beginTransaction();
       const result = await callback(connection);
@@ -94,10 +73,7 @@ const queryService = {
       return result;
     } catch (error: unknown) {
       await connection.rollback();
-      console.error("❌ execTransaction error:", {
-        logBase,
-        error: (error as Error).message,
-      });
+      console.error("❌ execTransaction error:", { logBase, error });
       throw error;
     } finally {
       connection.release();

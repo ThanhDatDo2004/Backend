@@ -4,6 +4,27 @@ import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import paymentService from "../services/payment.service";
 
+// MySQL Row type fallback
+type BookingInfo = {
+  CustomerUserID?: number | null;
+  ShopOwnerUserID?: number | null;
+  TotalPrice?: number;
+  PaymentStatus?: string;
+  FieldCode?: number;
+  FieldName?: string;
+};
+
+// Fallback type for Payment row
+type PaymentRow = {
+  PaymentID: number;
+  BookingCode: number;
+  PaymentMethod: string;
+  Amount: number;
+  TransactionCode?: string | null;
+  PaymentStatus: string;
+  PaidAt?: string | null;
+};
+
 function resolveCurrentUser(req: Request) {
   const rawUser = (req as any).user ?? {};
   const userId = Number(
@@ -12,33 +33,27 @@ function resolveCurrentUser(req: Request) {
   const role = String(
     rawUser.role ?? rawUser.LevelType ?? rawUser.level_type ?? ""
   ).toLowerCase();
+
   return { userId, role };
 }
 
 function parseBookingCode(value: string): number | null {
   const direct = Number(value);
-  if (Number.isFinite(direct) && direct > 0) {
-    return direct;
-  }
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
   const match = String(value).match(/(\d+)/);
   if (match && match[1]) {
     const parsed = Number(match[1]);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
+
   return null;
 }
 
-function ensureBookingAccess(
-  req: Request,
-  booking: { CustomerUserID?: number | null; ShopOwnerUserID?: number | null }
-) {
+function ensureBookingAccess(req: Request, booking: BookingInfo): void {
   const { userId, role } = resolveCurrentUser(req);
 
-  if (role === "admin") {
-    return;
-  }
+  if (role === "admin") return;
 
   if (!Number.isFinite(userId)) {
     throw new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập");
@@ -58,26 +73,25 @@ function ensureBookingAccess(
 }
 
 const paymentController = {
-  
+  // ============================================
+  // INITIATE PAYMENT
+  // ============================================
   async initiatePayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
       const { payment_method = "bank_transfer" } = req.body;
       const userId = Number((req as any).user?.UserID);
 
-      if (!bookingCode) {
+      if (!bookingCode)
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
         );
-      }
 
-      if (!Number.isFinite(userId) || userId <= 0) {
+      if (!Number.isFinite(userId) || userId <= 0)
         return next(
           new ApiError(StatusCodes.UNAUTHORIZED, "Yêu cầu đăng nhập")
         );
-      }
 
-      // Validate payment method
       const validMethods = ["bank_transfer", "card", "ewallet", "cash"];
       if (!validMethods.includes(payment_method)) {
         return next(
@@ -88,31 +102,28 @@ const paymentController = {
         );
       }
 
-      // Try to find existing booking by searchable identifier
       const normalizedCode = parseBookingCode(String(bookingCode));
-      if (!normalizedCode) {
+      if (!normalizedCode)
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
             "BookingCode format không hợp lệ"
           )
         );
-      }
 
-      const booking = await paymentService.getBookingDetailWithOwner(
+      const booking = (await paymentService.getBookingDetailWithOwner(
         normalizedCode
-      );
+      )) as BookingInfo | null;
 
-      if (!booking) {
+      if (!booking)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
-      }
 
-      const customerUserId = Number(booking.CustomerUserID);
-      const shopOwnerUserId = Number(booking.ShopOwnerUserID);
-
-      if (customerUserId !== userId && shopOwnerUserId !== userId) {
+      if (
+        Number(booking.CustomerUserID) !== userId &&
+        Number(booking.ShopOwnerUserID) !== userId
+      ) {
         return next(
           new ApiError(
             StatusCodes.FORBIDDEN,
@@ -121,51 +132,38 @@ const paymentController = {
         );
       }
 
-      // Kiểm tra booking chưa thanh toán
       if (booking.PaymentStatus === "paid") {
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "Booking đã thanh toán")
         );
       }
 
-      // Tạo payment record với BookingCode thực (INT)
       const paymentInfo = await paymentService.initiatePayment(
-        booking.BookingCode,
-        booking.TotalPrice,
+        normalizedCode,
+        booking.TotalPrice!,
         payment_method
       );
 
-      console.log("DEBUG initiatePayment:", {
-        bookingCode: bookingCode,
-        actualBookingCode: booking.BookingCode,
-        booking: {
-          BookingCode: booking.BookingCode,
-          TotalPrice: booking.TotalPrice,
-        },
-        paymentInfo,
-      });
-
-      // Build SePay QR URL (FE can render this URL as <img src="..." />)
       const sepayAcc = process.env.SEPAY_ACC || "96247THUERE";
       const sepayBank = process.env.SEPAY_BANK || "BIDV";
       const amount = Number(booking.TotalPrice);
-      const des = `BK${booking.BookingCode}`;
+      const des = `BK${normalizedCode}`;
+
       const sepayQrUrl = `https://qr.sepay.vn/img?acc=${encodeURIComponent(
         sepayAcc
       )}&bank=${encodeURIComponent(sepayBank)}&amount=${encodeURIComponent(
         amount
       )}&des=${encodeURIComponent(des)}`;
 
-      // Không gọi Momo nữa. Trả về thông tin để FE hiển thị QR SePay và chờ webhook
       return apiResponse.success(
         res,
         {
           paymentID: paymentInfo.paymentID,
           qr_code: sepayQrUrl,
           momo_url: null,
-          amount: amount,
+          amount,
           expiresIn: 900,
-          bookingId: booking.BookingCode,
+          bookingId: normalizedCode,
           paymentMethod: payment_method,
           bankAccount: {
             bankName:
@@ -178,55 +176,46 @@ const paymentController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          500,
-          (error as Error)?.message || "Không thể khởi tạo thanh toán"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message));
     }
   },
 
-  /**
-   * Check trạng thái thanh toán
-   * GET /api/payments/bookings/:bookingCode/status
-   */
+  // ============================================
+  // GET PAYMENT STATUS
+  // ============================================
   async getPaymentStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
 
-      if (!bookingCode) {
+      if (!bookingCode)
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
         );
-      }
 
       const searchBookingCode = parseBookingCode(String(bookingCode));
-      if (!searchBookingCode) {
+      if (!searchBookingCode)
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
             "BookingCode format không hợp lệ"
           )
         );
-      }
 
-      const bookingInfo = await paymentService.getBookingOwnershipInfo(
+      const bookingInfo = (await paymentService.getBookingOwnershipInfo(
         searchBookingCode
-      );
-      if (!bookingInfo) {
+      )) as BookingInfo | null;
+
+      if (!bookingInfo)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
-      }
+
       ensureBookingAccess(req, bookingInfo);
 
-      // Lấy payment info
-      let payment = await paymentService.getPaymentByBookingCode(
-        searchBookingCode as any
-      );
+      const payment = (await paymentService.getPaymentByBookingCode(
+        searchBookingCode
+      )) as PaymentRow | null;
 
-      // Nếu payment không tìm thấy (transaction chưa commit), fallback: lấy booking info
       if (!payment) {
         return apiResponse.success(
           res,
@@ -257,57 +246,51 @@ const paymentController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          500,
-          (error as Error)?.message || "Không thể lấy trạng thái thanh toán"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message));
     }
   },
 
-
+  // ============================================
+  // VERIFY PAYMENT
+  // ============================================
   async verifyPayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
 
-      if (!bookingCode) {
+      if (!bookingCode)
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
         );
-      }
 
       const searchBookingCode = parseBookingCode(String(bookingCode));
-      if (!searchBookingCode) {
+      if (!searchBookingCode)
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
             "BookingCode format không hợp lệ"
           )
         );
-      }
 
-      const bookingInfo = await paymentService.getBookingOwnershipInfo(
+      const bookingInfo = (await paymentService.getBookingOwnershipInfo(
         searchBookingCode
-      );
-      if (!bookingInfo) {
+      )) as BookingInfo | null;
+
+      if (!bookingInfo)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
-      }
+
       ensureBookingAccess(req, bookingInfo);
 
-      // Get payment
-      const payment = await paymentService.getPaymentByBookingCode(
-        searchBookingCode as any
-      );
-      if (!payment) {
+      const payment = (await paymentService.getPaymentByBookingCode(
+        searchBookingCode
+      )) as PaymentRow | null;
+
+      if (!payment)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
         );
-      }
 
-      // If already paid, return success
       if (payment.PaymentStatus === "paid") {
         return apiResponse.success(
           res,
@@ -322,14 +305,12 @@ const paymentController = {
         );
       }
 
-      // Check if SePay webhook has been called
       const hasWebhookLog = await paymentService.hasPaymentLog(
         payment.PaymentID,
         "sepay_webhook"
       );
 
       if (hasWebhookLog) {
-        // Webhook đã gọi, payment đã được update
         return apiResponse.success(
           res,
           {
@@ -343,7 +324,6 @@ const paymentController = {
         );
       }
 
-      // Chưa nhận webhook
       return apiResponse.success(
         res,
         {
@@ -357,19 +337,9 @@ const paymentController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          500,
-          (error as Error)?.message || "Không thể kiểm tra thanh toán"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message));
     }
   },
-
-  /**
-   * Webhook callback từ SePay (thay thế Momo)
-   * POST /api/payments/webhook/sepay
-   */
   async sepayCallback(req: Request, res: Response, next: NextFunction) {
     try {
       const {
@@ -547,48 +517,46 @@ const paymentController = {
     }
   },
 
- 
+  // ============================================
+  // RESULT
+  // ============================================
   async getPaymentResult(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
 
-      if (!bookingCode) {
+      if (!bookingCode)
         return next(
           new ApiError(StatusCodes.BAD_REQUEST, "BookingCode là bắt buộc")
         );
-      }
 
       const searchBookingCode = parseBookingCode(String(bookingCode));
-      if (!searchBookingCode) {
+      if (!searchBookingCode)
         return next(
           new ApiError(
             StatusCodes.BAD_REQUEST,
             "BookingCode format không hợp lệ"
           )
         );
-      }
 
-      const booking = await paymentService.getBookingDetailWithOwner(
+      const booking = (await paymentService.getBookingDetailWithOwner(
         searchBookingCode
-      );
+      )) as BookingInfo | null;
 
-      if (!booking) {
+      if (!booking)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy booking")
         );
-      }
+
       ensureBookingAccess(req, booking);
 
-      // Lấy payment info
-      const payment = await paymentService.getPaymentByBookingCode(
-        searchBookingCode as any
-      );
+      const payment = (await paymentService.getPaymentByBookingCode(
+        searchBookingCode
+      )) as PaymentRow | null;
 
-      if (!payment) {
+      if (!payment)
         return next(
           new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy payment")
         );
-      }
 
       const slotRows = await paymentService.getFieldSlotsForBooking(
         searchBookingCode
@@ -617,12 +585,7 @@ const paymentController = {
         StatusCodes.OK
       );
     } catch (error) {
-      next(
-        new ApiError(
-          500,
-          (error as Error)?.message || "Lỗi lấy kết quả thanh toán"
-        )
-      );
+      next(new ApiError(500, (error as Error)?.message));
     }
   },
 };
