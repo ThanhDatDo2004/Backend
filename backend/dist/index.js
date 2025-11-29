@@ -19,17 +19,54 @@ const booking_routes_1 = __importDefault(require("./routes/booking.routes"));
 const cart_routes_1 = __importDefault(require("./routes/cart.routes"));
 const errorMiddlewares_1 = require("./middlewares/errorMiddlewares");
 const app = (0, express_1.default)();
-const defaultAllowedOrigins = ["https://thuere.site"];
+const defaultAllowedOrigins = [
+    "https://thuere.site",
+    "https://www.thuere.site",
+    "http://thuere.site",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+];
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || defaultAllowedOrigins.join(","))
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean);
+const allowPrivateOrigins = (process.env.CORS_ALLOW_PRIVATE || "true").toLowerCase() === "true";
+const hasWildcard = allowedOrigins.includes("*");
+function isPrivateHost(hostname) {
+    const normalized = hostname.toLowerCase();
+    if (normalized === "localhost" ||
+        normalized === "127.0.0.1" ||
+        normalized === "::1" ||
+        normalized === "[::1]") {
+        return true;
+    }
+    if (normalized.startsWith("192.168."))
+        return true;
+    if (normalized.startsWith("10."))
+        return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized))
+        return true;
+    return false;
+}
+function checkOrigin(origin) {
+    if (!origin)
+        return true;
+    if (hasWildcard || allowedOrigins.includes(origin))
+        return true;
+    try {
+        const parsed = new URL(origin);
+        if (allowPrivateOrigins && isPrivateHost(parsed.hostname)) {
+            return true;
+        }
+    }
+    catch (_error) { }
+    return false;
+}
 const corsOptions = {
     origin(origin, callback) {
-        if (!origin)
+        if (checkOrigin(origin)) {
             return callback(null, true);
-        if (allowedOrigins.includes(origin))
-            return callback(null, true);
+        }
         return callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
     credentials: false,

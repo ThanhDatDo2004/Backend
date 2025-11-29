@@ -25,6 +25,6 @@ router.get(
   paymentController.getPaymentResult
 );
 
-router.post("/webhook/sepay", paymentController.sepayCallback);
+router.all("/webhook/sepay", paymentController.sepayCallback);
 
 export default router;
