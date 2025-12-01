@@ -11,5 +11,5 @@ router.post("/bookings/:bookingCode/initiate", auth_middleware_1.requireAuth, pa
 router.get("/bookings/:bookingCode/status", auth_middleware_1.requireAuth, payment_controller_1.default.getPaymentStatus);
 router.get("/bookings/:bookingCode/verify", auth_middleware_1.requireAuth, payment_controller_1.default.verifyPayment);
 router.get("/result/:bookingCode", auth_middleware_1.requireAuth, payment_controller_1.default.getPaymentResult);
-router.post("/webhook/sepay", payment_controller_1.default.sepayCallback);
+router.all("/webhook/sepay", payment_controller_1.default.sepayCallback);
 exports.default = router;
