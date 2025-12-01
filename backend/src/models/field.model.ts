@@ -356,17 +356,7 @@ const fieldModel = {
         DATE_FORMAT(fs.EndTime, '%H:%i') AS end_time,
         fs.Status AS status,
         DATE_FORMAT(fs.HoldExpiresAt, '%Y-%m-%d %H:%i:%s') AS hold_expires_at,
-        UNIX_TIMESTAMP(
-          CONVERT_TZ(
-            fs.HoldExpiresAt,
-            IF(
-              @@session.time_zone = 'SYSTEM',
-              @@system_time_zone,
-              @@session.time_zone
-            ),
-            '+00:00'
-          )
-        ) AS hold_exp_ts,
+        UNIX_TIMESTAMP(fs.HoldExpiresAt) AS hold_exp_ts,
         UNIX_TIMESTAMP(fs.UpdateAt) AS update_at_ts
       FROM Field_Slots fs
       LEFT JOIN Field_Quantity fq ON fs.QuantityID = fq.QuantityID
