@@ -7,6 +7,7 @@ const pool = (0, promise_1.createPool)({
     database: process.env.DB_NAME,
     password: process.env.DB_PASS,
     port: Number(process.env.DB_PORT) || 3306,
+    timezone: process.env.DB_TIMEZONE || "+07:00",
     decimalNumbers: true,
     waitForConnections: true,
     connectionLimit: 10,
