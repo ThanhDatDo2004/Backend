@@ -717,7 +717,7 @@ const bookingModel = {
          PreviousStatus,
          CreateAt,
          UpdateAt
-       ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
        ON DUPLICATE KEY UPDATE
          Reason = VALUES(Reason),
          Status = 'pending',
