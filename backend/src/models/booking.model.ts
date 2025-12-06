@@ -39,6 +39,11 @@ export type CustomerBookingRow = RowDataPacket & {
   ShopName: string;
   CustomerPhone: string | null;
   CheckinCode: string | null;
+  CancellationStatus?: string | null;
+  CancellationRefundAmount?: number | null;
+  CancellationPenaltyPercent?: number | null;
+  CancellationRequestedAt?: string | null;
+  CancellationDecidedAt?: string | null;
 };
 
 export type BookingSlotWithQuantityRow = RowDataPacket & {
@@ -77,6 +82,32 @@ export type ShopBookingRow = RowDataPacket & {
   CustomerName: string | null;
   CustomerPhone: string | null;
   FieldName: string | null;
+  CancellationStatus?: string | null;
+  CancellationRefundAmount?: number | null;
+  CancellationPenaltyPercent?: number | null;
+  CancellationRequestedAt?: string | null;
+  CancellationDecidedAt?: string | null;
+};
+
+export type BookingCancellationRequestRow = RowDataPacket & {
+  RequestID: number;
+  BookingCode: number;
+  CustomerUserID: number;
+  ShopCode: number;
+  FieldCode: number | null;
+  Reason: string | null;
+  Status: string;
+  PenaltyPercent: number;
+  RefundAmount: number;
+  DecisionToken: string;
+  DecisionAt: string | null;
+  DecisionBy: number | null;
+  CustomerPhone: string | null;
+  CustomerName: string | null;
+  CustomerEmail: string | null;
+  PreviousStatus?: string | null;
+  CreateAt: string;
+  UpdateAt: string;
 };
 
 // ============ BOOKING MODEL ============
@@ -683,10 +714,16 @@ const bookingModel = {
         b.*, 
         f.FieldName,
         f.SportType,
-        s.ShopName
+        s.ShopName,
+        bcr.Status AS CancellationStatus,
+        bcr.RefundAmount AS CancellationRefundAmount,
+        bcr.PenaltyPercent AS CancellationPenaltyPercent,
+        bcr.CreateAt AS CancellationRequestedAt,
+        bcr.DecisionAt AS CancellationDecidedAt
       FROM Bookings b
       JOIN Fields f ON b.FieldCode = f.FieldCode
       JOIN Shops s ON f.ShopCode = s.ShopCode
+      LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
       WHERE b.CustomerUserID = ?
     `;
 
@@ -770,10 +807,16 @@ const bookingModel = {
                         b.UpdateAt,
                         u.FullName AS CustomerName,
                         b.CustomerPhone,
-                        f.FieldName
+                        f.FieldName,
+                        bcr.Status AS CancellationStatus,
+                        bcr.RefundAmount AS CancellationRefundAmount,
+                        bcr.PenaltyPercent AS CancellationPenaltyPercent,
+                        bcr.CreateAt AS CancellationRequestedAt,
+                        bcr.DecisionAt AS CancellationDecidedAt
                  FROM Bookings b
                  JOIN Fields f ON b.FieldCode = f.FieldCode
                  LEFT JOIN Users u ON b.CustomerUserID = u.UserID
+                 LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
                  WHERE f.ShopCode = ?`;
     const params: any[] = [shopCode];
 
@@ -861,11 +904,17 @@ const bookingModel = {
   ): Promise<RowDataPacket | null> {
     let query = `
       SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
-             CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END AS paid_amount
+             CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END AS paid_amount,
+             bcr.Status AS CancellationStatus,
+             bcr.RefundAmount AS CancellationRefundAmount,
+             bcr.PenaltyPercent AS CancellationPenaltyPercent,
+             bcr.CreateAt AS CancellationRequestedAt,
+             bcr.DecisionAt AS CancellationDecidedAt
       FROM Bookings b
       JOIN Fields f ON b.FieldCode = f.FieldCode
       JOIN Shops s ON f.ShopCode = s.ShopCode
       LEFT JOIN Payments_Admin p ON b.PaymentID = p.PaymentID
+      LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
       WHERE b.BookingCode = ?
     `;
     const params: any[] = [bookingCode];
@@ -875,6 +924,25 @@ const bookingModel = {
     }
 
     const [rows] = await queryService.query<RowDataPacket[]>(query, params);
+    return rows?.[0] || null;
+  },
+
+  async getBookingWithOwnerContact(bookingCode: number) {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT b.*, f.FieldName, f.FieldCode, f.ShopCode,
+              s.ShopName, s.PhoneNumber AS ShopPhone,
+              u.UserID AS ShopOwnerUserID,
+              u.FullName AS OwnerFullName,
+              u.Email AS OwnerEmail
+         FROM Bookings b
+         JOIN Fields f ON b.FieldCode = f.FieldCode
+         JOIN Shops s ON f.ShopCode = s.ShopCode
+         JOIN Users u ON s.UserID = u.UserID
+        WHERE b.BookingCode = ?
+        LIMIT 1`,
+      [bookingCode]
+    );
+
     return rows?.[0] || null;
   },
 
@@ -896,6 +964,19 @@ const bookingModel = {
          FROM Booking_Slots 
         WHERE BookingCode = ?
         ORDER BY PlayDate ASC, StartTime ASC
+        LIMIT 1`,
+      [bookingCode]
+    );
+
+    return rows?.[0] || null;
+  },
+
+  async getLatestSlot(bookingCode: number): Promise<RowDataPacket | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT PlayDate, EndTime
+         FROM Booking_Slots
+        WHERE BookingCode = ?
+        ORDER BY PlayDate DESC, EndTime DESC
         LIMIT 1`,
       [bookingCode]
     );
@@ -1000,6 +1081,137 @@ const bookingModel = {
     );
 
     return rows?.[0]?.ShopCode ?? null;
+  },
+
+  async getCancellationRequestByBooking(
+    bookingCode: number
+  ): Promise<BookingCancellationRequestRow | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT *
+         FROM Booking_Cancellation_Requests
+        WHERE BookingCode = ?
+        LIMIT 1`,
+      [bookingCode]
+    );
+
+    return (rows?.[0] as BookingCancellationRequestRow) || null;
+  },
+
+  async getCancellationRequestByToken(
+    token: string
+  ): Promise<BookingCancellationRequestRow | null> {
+    const [rows] = await queryService.query<RowDataPacket[]>(
+      `SELECT *
+         FROM Booking_Cancellation_Requests
+        WHERE DecisionToken = ?
+        LIMIT 1`,
+      [token]
+    );
+
+    return (rows?.[0] as BookingCancellationRequestRow) || null;
+  },
+
+  async upsertCancellationRequest(payload: {
+    bookingCode: number;
+    customerUserId: number;
+    shopCode: number;
+    fieldCode?: number | null;
+    reason?: string | null;
+    penaltyPercent: number;
+    refundAmount: number;
+    decisionToken: string;
+    customerPhone?: string | null;
+    customerName?: string | null;
+    customerEmail?: string | null;
+    previousStatus?: string | null;
+  }): Promise<BookingCancellationRequestRow | null> {
+    await queryService.query<ResultSetHeader>(
+      `INSERT INTO Booking_Cancellation_Requests (
+         BookingCode,
+         CustomerUserID,
+         ShopCode,
+         FieldCode,
+         Reason,
+         Status,
+         PenaltyPercent,
+         RefundAmount,
+         DecisionToken,
+         CustomerPhone,
+         CustomerName,
+         CustomerEmail,
+         PreviousStatus,
+         CreateAt,
+         UpdateAt
+       ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         Reason = VALUES(Reason),
+         Status = 'pending',
+         PenaltyPercent = VALUES(PenaltyPercent),
+         RefundAmount = VALUES(RefundAmount),
+         DecisionToken = VALUES(DecisionToken),
+         CustomerPhone = VALUES(CustomerPhone),
+         CustomerName = VALUES(CustomerName),
+         CustomerEmail = VALUES(CustomerEmail),
+         PreviousStatus = VALUES(PreviousStatus),
+         DecisionAt = NULL,
+         DecisionBy = NULL,
+         UpdateAt = NOW()`,
+      [
+        payload.bookingCode,
+        payload.customerUserId,
+        payload.shopCode,
+        payload.fieldCode ?? null,
+        payload.reason ?? null,
+        payload.penaltyPercent,
+        payload.refundAmount,
+        payload.decisionToken,
+        payload.customerPhone ?? null,
+        payload.customerName ?? null,
+        payload.customerEmail ?? null,
+        payload.previousStatus ?? null,
+      ]
+    );
+
+    return await this.getCancellationRequestByBooking(payload.bookingCode);
+  },
+
+  async updateCancellationRequestStatus(
+    requestId: number,
+    updates: {
+      status: "approved" | "rejected";
+      decisionBy?: number | null;
+    }
+  ): Promise<void> {
+    await queryService.query<ResultSetHeader>(
+      `UPDATE Booking_Cancellation_Requests
+          SET Status = ?,
+              DecisionAt = NOW(),
+              DecisionBy = ?,
+              UpdateAt = NOW()
+        WHERE RequestID = ?`,
+      [updates.status, updates.decisionBy ?? null, requestId]
+    );
+  },
+
+  async markPastPaidBookingsCompleted(): Promise<number> {
+    const [result] = await queryService.query<ResultSetHeader>(
+      `UPDATE Bookings b
+          JOIN (
+            SELECT BookingCode,
+                   MAX(TIMESTAMP(PlayDate, EndTime)) AS LastSlotAt
+              FROM Booking_Slots
+             GROUP BY BookingCode
+          ) slot_summary ON slot_summary.BookingCode = b.BookingCode
+         SET b.BookingStatus = 'completed',
+             b.CompletedAt = NOW(),
+             b.UpdateAt = NOW()
+       WHERE b.BookingStatus = 'confirmed'
+         AND b.PaymentStatus = 'paid'
+         AND slot_summary.LastSlotAt <= NOW()`,
+      []
+    );
+
+    return Number(result?.affectedRows ?? 0);
   },
 
   /**

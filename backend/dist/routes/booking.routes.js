@@ -9,6 +9,7 @@ const auth_middleware_1 = require("../middlewares/auth.middleware");
 const role_middleware_1 = require("../middlewares/role.middleware");
 const auth_middleware_2 = require("../middlewares/auth.middleware");
 const router = express_1.default.Router();
+router.post("/cancellation-requests/respond", booking_controller_1.default.respondCancellationRequest);
 // Customer endpoints
 router.get("/", auth_middleware_1.requireAuth, booking_controller_1.default.listBookings);
 router.post("/", auth_middleware_2.optionalAuth, booking_controller_1.default.createBooking);

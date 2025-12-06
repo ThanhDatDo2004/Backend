@@ -6,6 +6,11 @@ import { optionalAuth } from "../middlewares/auth.middleware";
 
 const router = express.Router();
 
+router.post(
+  "/cancellation-requests/respond",
+  bookingController.respondCancellationRequest
+);
+
 // Customer endpoints
 router.get("/", requireAuth, bookingController.listBookings);
 router.post("/", optionalAuth, bookingController.createBooking);

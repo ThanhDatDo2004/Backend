@@ -197,10 +197,30 @@ const bookingController = {
                 return next(new apiErrors_1.default(http_status_codes_1.StatusCodes.BAD_REQUEST, "BookingCode format không hợp lệ"));
             }
             const result = await (0, booking_service_1.cancelCustomerBooking)(normalizedCode, userId, typeof reason === "string" ? reason : undefined);
-            return respone_1.default.success(res, result, "Hủy booking thành công", http_status_codes_1.StatusCodes.OK);
+            return respone_1.default.success(res, result, result?.message || "Hủy booking thành công", http_status_codes_1.StatusCodes.OK);
         }
         catch (error) {
             next(new apiErrors_1.default(500, error?.message || "Lỗi hủy booking"));
+        }
+    },
+    async respondCancellationRequest(req, res, next) {
+        try {
+            const token = typeof req.body?.token === "string" ? req.body.token : "";
+            const decisionRaw = typeof req.body?.decision === "string" ? req.body.decision : "";
+            if (!token || !decisionRaw) {
+                return next(new apiErrors_1.default(http_status_codes_1.StatusCodes.BAD_REQUEST, "Thiếu token hoặc quyết định xử lý"));
+            }
+            const normalizedDecision = decisionRaw.toLowerCase().startsWith("a")
+                ? "approve"
+                : "reject";
+            const result = await (0, booking_service_1.respondCancellationRequestByToken)(token.trim(), normalizedDecision);
+            const message = normalizedDecision === "approve"
+                ? "Đã chấp nhận yêu cầu hủy sân"
+                : "Đã từ chối yêu cầu hủy sân";
+            return respone_1.default.success(res, result, message, http_status_codes_1.StatusCodes.OK);
+        }
+        catch (error) {
+            next(new apiErrors_1.default(error?.statusCode || 500, error?.message || "Không thể xử lý yêu cầu hủy sân"));
         }
     },
     /**

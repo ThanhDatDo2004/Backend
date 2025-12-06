@@ -63,6 +63,28 @@ export async function sendResetPasswordEmail(to: string, resetLink: string) {
   return info;
 }
 
+const currencyFormatter = new Intl.NumberFormat("vi-VN", {
+  style: "currency",
+  currency: "VND",
+  maximumFractionDigits: 0,
+});
+
+const formatCurrency = (value: number) => currencyFormatter.format(value || 0);
+
+const buildCancellationDecisionUrl = (
+  token: string,
+  decision: "approve" | "reject"
+) => {
+  const frontendBase = resolveFrontendBaseUrl();
+  const base = frontendBase.endsWith("/")
+    ? frontendBase
+    : `${frontendBase}/`;
+  const url = new URL("cancellation-response", base);
+  url.searchParams.set("token", token);
+  url.searchParams.set("decision", decision);
+  return url.toString();
+};
+
 export async function sendBookingConfirmationEmail(
   to: string,
   bookingCode: string,
@@ -117,6 +139,123 @@ Vui lòng sử dụng mã check-in này khi đến sân.`,
       
       <p><strong>Lưu ý:</strong> Vui lòng sử dụng mã check-in này khi đến sân. Mã check-in là bắt buộc!</p>
       <p>Cảm ơn bạn đã sử dụng ${appName}!</p>
+    `,
+  });
+
+  return info;
+}
+
+type CancellationEmailPayload = {
+  to: string;
+  ownerName?: string | null;
+  shopName?: string | null;
+  fieldName?: string | null;
+  bookingCode: number | string;
+  slots: string[];
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  refundAmount: number;
+  penaltyPercent: number;
+  token: string;
+};
+
+export async function sendCancellationRequestEmail(
+  payload: CancellationEmailPayload
+) {
+  const {
+    to,
+    ownerName,
+    shopName,
+    fieldName,
+    bookingCode,
+    slots,
+    customerName,
+    customerPhone,
+    customerEmail,
+    refundAmount,
+    penaltyPercent,
+    token,
+  } = payload;
+  const appName = process.env.APP_NAME || "ThueRe";
+  const acceptUrl = buildCancellationDecisionUrl(token, "approve");
+  const rejectUrl = buildCancellationDecisionUrl(token, "reject");
+
+  const info = await transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to,
+    subject: `[${appName}] Yêu cầu hủy sân #${bookingCode}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <p>Chào ${ownerName || "anh/chị"},</p>
+        <p>Khách hàng ${
+          customerName || "nặc danh"
+        } vừa yêu cầu hủy booking <strong>#${bookingCode}</strong> ${
+      shopName ? `tại ${shopName}` : ""
+    }${fieldName ? ` - ${fieldName}` : ""}.</p>
+        <ul>
+          <li>Số điện thoại khách: ${customerPhone || "Chưa cung cấp"}</li>
+          <li>Email khách: ${customerEmail || "Chưa cung cấp"}</li>
+          <li>Khung giờ: ${slots.length ? slots.join(", ") : "Đang cập nhật"}</li>
+          <li>Hoàn tiền dự kiến: ${formatCurrency(refundAmount)} (khách mất ${penaltyPercent}% phí đặt)</li>
+        </ul>
+        <p>Anh/chị có thể xử lý yêu cầu này ngay:</p>
+        <p>
+          <a href="${acceptUrl}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;margin-right:12px;">Đồng ý hủy</a>
+          <a href="${rejectUrl}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;">Từ chối</a>
+        </p>
+        <p>Nếu các nút không hoạt động, sao chép các liên kết sau vào trình duyệt:</p>
+        <p>Đồng ý: <br/><a href="${acceptUrl}">${acceptUrl}</a></p>
+        <p>Từ chối: <br/><a href="${rejectUrl}">${rejectUrl}</a></p>
+        <p>Trân trọng,<br/>${appName}</p>
+      </div>
+    `,
+  });
+
+  return info;
+}
+
+export async function sendCancellationDecisionEmail(options: {
+  to: string;
+  approved: boolean;
+  bookingCode: number | string;
+  refundAmount?: number | null;
+  shopName?: string | null;
+  fieldName?: string | null;
+}) {
+  const { to, approved, bookingCode, refundAmount, shopName, fieldName } =
+    options;
+  const appName = process.env.APP_NAME || "ThueRe";
+  const subject = approved
+    ? `[${appName}] Booking #${bookingCode} đã được hủy`
+    : `[${appName}] Yêu cầu hủy booking #${bookingCode} bị từ chối`;
+
+  const defaultMessage = approved
+    ? `Yêu cầu hủy booking #${bookingCode} đã được chủ sân chấp thuận.${
+        refundAmount
+          ? ` Bạn sẽ được hoàn lại ${formatCurrency(
+              Number(refundAmount)
+            )} trong thời gian sớm nhất.`
+          : ""
+      }`
+    : `Chủ sân đã từ chối yêu cầu hủy booking #${bookingCode}. Vui lòng liên hệ chủ sân nếu cần hỗ trợ thêm.`;
+
+  const info = await transporter.sendMail({
+    from: `"${appName}" <${process.env.GMAIL_USER}>`,
+    to,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <p>${defaultMessage}</p>
+        ${
+          shopName || fieldName
+            ? `<p>Sân: <strong>${[shopName, fieldName].filter(Boolean).join(
+                " - "
+              )}</strong></p>`
+            : ""
+        }
+        <p>Trân trọng,<br/>${appName}</p>
+      </div>
     `,
   });
 

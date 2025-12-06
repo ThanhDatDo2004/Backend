@@ -431,10 +431,16 @@ const bookingModel = {
         b.*, 
         f.FieldName,
         f.SportType,
-        s.ShopName
+        s.ShopName,
+        bcr.Status AS CancellationStatus,
+        bcr.RefundAmount AS CancellationRefundAmount,
+        bcr.PenaltyPercent AS CancellationPenaltyPercent,
+        bcr.CreateAt AS CancellationRequestedAt,
+        bcr.DecisionAt AS CancellationDecidedAt
       FROM Bookings b
       JOIN Fields f ON b.FieldCode = f.FieldCode
       JOIN Shops s ON f.ShopCode = s.ShopCode
+      LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
       WHERE b.CustomerUserID = ?
     `;
         const params = [userId];
@@ -499,10 +505,16 @@ const bookingModel = {
                         b.UpdateAt,
                         u.FullName AS CustomerName,
                         b.CustomerPhone,
-                        f.FieldName
+                        f.FieldName,
+                        bcr.Status AS CancellationStatus,
+                        bcr.RefundAmount AS CancellationRefundAmount,
+                        bcr.PenaltyPercent AS CancellationPenaltyPercent,
+                        bcr.CreateAt AS CancellationRequestedAt,
+                        bcr.DecisionAt AS CancellationDecidedAt
                  FROM Bookings b
                  JOIN Fields f ON b.FieldCode = f.FieldCode
                  LEFT JOIN Users u ON b.CustomerUserID = u.UserID
+                 LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
                  WHERE f.ShopCode = ?`;
         const params = [shopCode];
         if (options.status) {
@@ -567,11 +579,17 @@ const bookingModel = {
     async getBookingDetail(bookingCode, userId) {
         let query = `
       SELECT b.*, f.FieldName, f.SportType, f.Address, s.ShopName, s.ShopCode,
-             CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END AS paid_amount
+             CASE WHEN b.PaymentStatus = 'paid' THEN p.Amount ELSE 0 END AS paid_amount,
+             bcr.Status AS CancellationStatus,
+             bcr.RefundAmount AS CancellationRefundAmount,
+             bcr.PenaltyPercent AS CancellationPenaltyPercent,
+             bcr.CreateAt AS CancellationRequestedAt,
+             bcr.DecisionAt AS CancellationDecidedAt
       FROM Bookings b
       JOIN Fields f ON b.FieldCode = f.FieldCode
       JOIN Shops s ON f.ShopCode = s.ShopCode
       LEFT JOIN Payments_Admin p ON b.PaymentID = p.PaymentID
+      LEFT JOIN Booking_Cancellation_Requests bcr ON b.BookingCode = bcr.BookingCode
       WHERE b.BookingCode = ?
     `;
         const params = [bookingCode];
@@ -580,6 +598,20 @@ const bookingModel = {
             params.push(userId);
         }
         const [rows] = await query_1.default.query(query, params);
+        return rows?.[0] || null;
+    },
+    async getBookingWithOwnerContact(bookingCode) {
+        const [rows] = await query_1.default.query(`SELECT b.*, f.FieldName, f.FieldCode, f.ShopCode,
+              s.ShopName, s.PhoneNumber AS ShopPhone,
+              u.UserID AS ShopOwnerUserID,
+              u.FullName AS OwnerFullName,
+              u.Email AS OwnerEmail
+         FROM Bookings b
+         JOIN Fields f ON b.FieldCode = f.FieldCode
+         JOIN Shops s ON f.ShopCode = s.ShopCode
+         JOIN Users u ON s.UserID = u.UserID
+        WHERE b.BookingCode = ?
+        LIMIT 1`, [bookingCode]);
         return rows?.[0] || null;
     },
     async getBookingByCustomer(bookingCode, userId) {
@@ -591,6 +623,14 @@ const bookingModel = {
          FROM Booking_Slots 
         WHERE BookingCode = ?
         ORDER BY PlayDate ASC, StartTime ASC
+        LIMIT 1`, [bookingCode]);
+        return rows?.[0] || null;
+    },
+    async getLatestSlot(bookingCode) {
+        const [rows] = await query_1.default.query(`SELECT PlayDate, EndTime
+         FROM Booking_Slots
+        WHERE BookingCode = ?
+        ORDER BY PlayDate DESC, EndTime DESC
         LIMIT 1`, [bookingCode]);
         return rows?.[0] || null;
     },
@@ -645,6 +685,90 @@ const bookingModel = {
     async getFieldShopCode(fieldCode) {
         const [rows] = await query_1.default.query(`SELECT ShopCode FROM Fields WHERE FieldCode = ?`, [fieldCode]);
         return rows?.[0]?.ShopCode ?? null;
+    },
+    async getCancellationRequestByBooking(bookingCode) {
+        const [rows] = await query_1.default.query(`SELECT *
+         FROM Booking_Cancellation_Requests
+        WHERE BookingCode = ?
+        LIMIT 1`, [bookingCode]);
+        return rows?.[0] || null;
+    },
+    async getCancellationRequestByToken(token) {
+        const [rows] = await query_1.default.query(`SELECT *
+         FROM Booking_Cancellation_Requests
+        WHERE DecisionToken = ?
+        LIMIT 1`, [token]);
+        return rows?.[0] || null;
+    },
+    async upsertCancellationRequest(payload) {
+        await query_1.default.query(`INSERT INTO Booking_Cancellation_Requests (
+         BookingCode,
+         CustomerUserID,
+         ShopCode,
+         FieldCode,
+         Reason,
+         Status,
+         PenaltyPercent,
+         RefundAmount,
+         DecisionToken,
+         CustomerPhone,
+         CustomerName,
+         CustomerEmail,
+         PreviousStatus,
+         CreateAt,
+         UpdateAt
+       ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         Reason = VALUES(Reason),
+         Status = 'pending',
+         PenaltyPercent = VALUES(PenaltyPercent),
+         RefundAmount = VALUES(RefundAmount),
+         DecisionToken = VALUES(DecisionToken),
+         CustomerPhone = VALUES(CustomerPhone),
+         CustomerName = VALUES(CustomerName),
+         CustomerEmail = VALUES(CustomerEmail),
+         PreviousStatus = VALUES(PreviousStatus),
+         DecisionAt = NULL,
+         DecisionBy = NULL,
+         UpdateAt = NOW()`, [
+            payload.bookingCode,
+            payload.customerUserId,
+            payload.shopCode,
+            payload.fieldCode ?? null,
+            payload.reason ?? null,
+            payload.penaltyPercent,
+            payload.refundAmount,
+            payload.decisionToken,
+            payload.customerPhone ?? null,
+            payload.customerName ?? null,
+            payload.customerEmail ?? null,
+            payload.previousStatus ?? null,
+        ]);
+        return await this.getCancellationRequestByBooking(payload.bookingCode);
+    },
+    async updateCancellationRequestStatus(requestId, updates) {
+        await query_1.default.query(`UPDATE Booking_Cancellation_Requests
+          SET Status = ?,
+              DecisionAt = NOW(),
+              DecisionBy = ?,
+              UpdateAt = NOW()
+        WHERE RequestID = ?`, [updates.status, updates.decisionBy ?? null, requestId]);
+    },
+    async markPastPaidBookingsCompleted() {
+        const [result] = await query_1.default.query(`UPDATE Bookings b
+          JOIN (
+            SELECT BookingCode,
+                   MAX(TIMESTAMP(PlayDate, EndTime)) AS LastSlotAt
+              FROM Booking_Slots
+             GROUP BY BookingCode
+          ) slot_summary ON slot_summary.BookingCode = b.BookingCode
+         SET b.BookingStatus = 'completed',
+             b.CompletedAt = NOW(),
+             b.UpdateAt = NOW()
+       WHERE b.BookingStatus = 'confirmed'
+         AND b.PaymentStatus = 'paid'
+         AND slot_summary.LastSlotAt <= NOW()`, []);
+        return Number(result?.affectedRows ?? 0);
     },
     /**
      * Cancel expired bookings

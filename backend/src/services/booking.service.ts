@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { StatusCodes } from "http-status-codes";
 import ApiError from "../utils/apiErrors";
 import shopPromotionService, {
@@ -9,14 +10,23 @@ import bookingModel, {
   type BookingSlotWithQuantityRow,
   type CustomerBookingRow,
   type ShopBookingFilters,
+  type BookingCancellationRequestRow,
 } from "../models/booking.model";
 import paymentModel from "../models/payment.model";
 import cartService from "./cart.service";
 import shopService from "./shop.service";
+import {
+  sendCancellationDecisionEmail,
+  sendCancellationRequestEmail,
+} from "./mail.service";
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
 const HOLD_DURATION_MS = 15 * 60 * 1000;
+const SAFE_PAID_CANCEL_HOURS = 12;
+const SAFE_PENALTY_PERCENT = 50;
+const SAFE_REFUND_PERCENT = 50;
+const REFUND_RATIO = SAFE_REFUND_PERCENT > 0 ? SAFE_REFUND_PERCENT / 100 : 0.5;
 
 export type BookingSlotInput = {
   slot_id?: number | null;
@@ -95,6 +105,29 @@ const normalizeDate = (value: string) => {
 };
 
 const createHoldExpiryDeadline = () => new Date(Date.now() + HOLD_DURATION_MS);
+
+const buildSlotDateTime = (playDate: string, time: string) => {
+  const baseDate = new Date(playDate);
+  if (Number.isNaN(baseDate.getTime())) {
+    return null;
+  }
+  const [hours, minutes] = String(time ?? "")
+    .split(":")
+    .map((value) => Number(value));
+  baseDate.setHours(
+    Number.isFinite(hours) ? hours : 0,
+    Number.isFinite(minutes) ? minutes : 0,
+    0,
+    0
+  );
+  return baseDate;
+};
+
+const calculateHoursUntil = (playDate: string, time: string) => {
+  const slotDate = buildSlotDateTime(playDate, time);
+  if (!slotDate) return Infinity;
+  return (slotDate.getTime() - Date.now()) / (1000 * 60 * 60);
+};
 
 function normalizeSlots(slots: BookingSlotInput[]): NormalizedSlot[] {
   if (!Array.isArray(slots) || !slots.length) {
@@ -611,6 +644,12 @@ export async function listCustomerBookings(
   userId: number,
   options: CustomerBookingListOptions
 ) {
+  try {
+    await bookingModel.markPastPaidBookingsCompleted();
+  } catch (error) {
+    console.error("[booking] Failed to auto-complete bookings:", error);
+  }
+
   const limit = Math.max(1, Number(options.limit) || 10);
   const offset = Math.max(0, Number(options.offset) || 0);
   const sortField = typeof options.sort === "string" ? options.sort : undefined;
@@ -663,6 +702,11 @@ export async function listCustomerBookings(
       })),
       quantityId: quantityInfo?.QuantityID ?? null,
       quantityNumber: quantityInfo?.QuantityNumber ?? null,
+      cancellationStatus: booking.CancellationStatus ?? null,
+      cancellationRefundAmount: booking.CancellationRefundAmount ?? null,
+      cancellationPenaltyPercent: booking.CancellationPenaltyPercent ?? null,
+      cancellationRequestedAt: booking.CancellationRequestedAt ?? null,
+      cancellationDecidedAt: booking.CancellationDecidedAt ?? null,
     };
   });
 
@@ -692,6 +736,11 @@ export async function listShopBookingsForOwner(
 
   const shopCode = Number(shop.shop_code);
   await cancelStalePendingBookingsForShop(shopCode);
+  try {
+    await bookingModel.markPastPaidBookingsCompleted();
+  } catch (error) {
+    console.error("[booking] Failed to auto-complete bookings:", error);
+  }
 
   const limit = Math.min(Math.max(1, Number(options.limit) || 10), 100);
   const offset = Math.max(0, Number(options.offset) || 0);
@@ -757,6 +806,11 @@ export async function listShopBookingsForOwner(
       })),
       quantityId: quantityInfo?.QuantityID ?? null,
       quantityNumber: quantityInfo?.QuantityNumber ?? null,
+      cancellationStatus: booking.CancellationStatus ?? null,
+      cancellationRefundAmount: booking.CancellationRefundAmount ?? null,
+      cancellationPenaltyPercent: booking.CancellationPenaltyPercent ?? null,
+      cancellationRequestedAt: booking.CancellationRequestedAt ?? null,
+      cancellationDecidedAt: booking.CancellationDecidedAt ?? null,
     };
   });
 
@@ -774,6 +828,7 @@ export async function listShopBookingsForOwner(
     confirmed: 0,
     completed: 0,
     cancelled: 0,
+    cancellation_pending: 0,
   };
   bookingSummaryRows.forEach((row: any) => {
     if (row.BookingStatus) {
@@ -830,7 +885,176 @@ export async function getCustomerBookingDetail(
       PricePerSlot: slot.PricePerSlot,
       Status: slot.Status,
     })),
+    cancellation: detail.CancellationStatus
+      ? {
+          status: detail.CancellationStatus,
+          refundAmount: detail.CancellationRefundAmount,
+          penaltyPercent: detail.CancellationPenaltyPercent,
+          requestedAt: detail.CancellationRequestedAt,
+          decidedAt: detail.CancellationDecidedAt,
+        }
+      : null,
   };
+}
+
+const summarizeSlotWindows = (slots: BookingSlotWithQuantityRow[]) =>
+  slots.map(
+    (slot) =>
+      `${new Date(slot.PlayDate).toLocaleDateString("vi-VN")} ${
+        slot.StartTime
+      } - ${slot.EndTime}`
+  );
+
+async function createCancellationRequest(
+  booking: any,
+  userId: number,
+  reason?: string
+) {
+  const earliestSlot = await bookingModel.getEarliestSlot(booking.BookingCode);
+  if (earliestSlot?.PlayDate && earliestSlot?.StartTime) {
+    const diffHours = calculateHoursUntil(
+      earliestSlot.PlayDate,
+      earliestSlot.StartTime
+    );
+    if (diffHours < SAFE_PAID_CANCEL_HOURS) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        `Chỉ có thể hủy booking trước ${SAFE_PAID_CANCEL_HOURS} giờ`
+      );
+    }
+  }
+
+  const bookingOwner = await bookingModel.getBookingWithOwnerContact(
+    booking.BookingCode
+  );
+  if (!bookingOwner) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy thông tin sân");
+  }
+
+  const shopCode = Number(bookingOwner.ShopCode);
+  if (!Number.isFinite(shopCode)) {
+    throw new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy chủ sân");
+  }
+
+  const totalPrice = Number(booking.TotalPrice || 0);
+  const refundAmount =
+    booking.PaymentStatus === "paid"
+      ? Number((totalPrice * REFUND_RATIO).toFixed(0))
+      : 0;
+  const penaltyPercent =
+    booking.PaymentStatus === "paid" ? SAFE_PENALTY_PERCENT : 0;
+  const previousStatus =
+    typeof booking.BookingStatus === "string"
+      ? booking.BookingStatus
+      : "pending";
+
+  const token = randomBytes(24).toString("hex");
+  const request = await bookingModel.upsertCancellationRequest({
+    bookingCode: Number(booking.BookingCode),
+    customerUserId: userId,
+    shopCode,
+    fieldCode: Number(booking.FieldCode) || null,
+    reason: reason || null,
+    penaltyPercent,
+    refundAmount,
+    decisionToken: token,
+    customerPhone: booking.CustomerPhone || null,
+    customerName: booking.CustomerName || null,
+    customerEmail: booking.CustomerEmail || null,
+    previousStatus,
+  });
+
+  if (booking.BookingStatus !== "cancellation_pending") {
+    await bookingModel.setBookingStatus(
+      Number(booking.BookingCode),
+      "cancellation_pending"
+    );
+  }
+
+  const slotRows = await bookingModel.listSlotsWithQuantity([
+    Number(booking.BookingCode),
+  ]);
+
+  if (bookingOwner.OwnerEmail) {
+    try {
+      await sendCancellationRequestEmail({
+        to: bookingOwner.OwnerEmail,
+        ownerName: bookingOwner.OwnerFullName || bookingOwner.OwnerEmail,
+        shopName: bookingOwner.ShopName || "",
+        fieldName: bookingOwner.FieldName || "",
+        bookingCode: Number(booking.BookingCode),
+        slots: summarizeSlotWindows(slotRows),
+        customerName: booking.CustomerName || undefined,
+        customerPhone: booking.CustomerPhone || undefined,
+        customerEmail: booking.CustomerEmail || undefined,
+        refundAmount,
+        penaltyPercent,
+        token,
+      });
+    } catch (error) {
+      console.error("[mail] Failed to send cancellation request email:", error);
+    }
+  } else {
+    console.warn(
+      `[booking] Không tìm thấy email chủ sân cho booking ${booking.BookingCode}`
+    );
+  }
+
+  return {
+    bookingCode: Number(booking.BookingCode),
+    status: "cancellation_requested" as const,
+    cancellation: {
+      status: "pending" as const,
+      refundAmount,
+      penaltyPercent,
+      requestedAt: request?.CreateAt || new Date().toISOString(),
+    },
+    customerPhone: booking.CustomerPhone || null,
+    message: booking.CustomerPhone
+      ? `Chủ sân sẽ liên lạc với bạn qua số điện thoại ${booking.CustomerPhone}`
+      : "Chủ sân sẽ liên lạc với bạn qua số điện thoại bạn đã cung cấp.",
+  };
+}
+
+async function finalizeApprovedCancellation(
+  booking: any,
+  request: BookingCancellationRequestRow
+) {
+  const bookingCode = Number(request.BookingCode);
+  await bookingModel.setBookingStatus(bookingCode, "cancelled");
+  await bookingModel.setBookingSlotsStatus(bookingCode, "cancelled");
+  await bookingModel.resetFieldSlotsToAvailable(bookingCode);
+  await cartService.removeEntriesForBookings([bookingCode]);
+
+  if (Number(booking.FieldCode)) {
+    await bookingModel.decrementFieldRent(Number(booking.FieldCode));
+  }
+
+  const refundAmount = Number(request.RefundAmount || 0);
+  if (booking.PaymentStatus === "paid" && refundAmount > 0) {
+    await bookingModel.insertBookingRefund(
+      bookingCode,
+      refundAmount,
+      "Customer cancellation approved"
+    );
+
+    const netToShop = Number(booking.NetToShop || 0);
+    const totalPrice = Number(booking.TotalPrice || 0);
+    const refundRatio = totalPrice > 0 ? refundAmount / totalPrice : 0;
+    const debitAmount =
+      refundRatio > 0 ? Number((netToShop * refundRatio).toFixed(2)) : 0;
+
+    const shopCode =
+      Number(request.ShopCode) ||
+      Number(booking.ShopCode) ||
+      (Number(booking.FieldCode)
+        ? await bookingModel.getFieldShopCode(Number(booking.FieldCode))
+        : null);
+
+    if (shopCode && debitAmount > 0) {
+      await paymentModel.debitShopWallet(Number(shopCode), debitAmount);
+    }
+  }
 }
 
 export async function cancelCustomerBooking(
@@ -850,60 +1074,98 @@ export async function cancelCustomerBooking(
     );
   }
 
-  if (booking.BookingStatus !== "pending") {
-    const earliestSlot = await bookingModel.getEarliestSlot(bookingCode);
-    if (earliestSlot?.PlayDate && earliestSlot?.StartTime) {
-      const playDateTime = new Date(earliestSlot.PlayDate);
-      const [hours, minutes] = String(earliestSlot.StartTime)
-        .split(":")
-        .map((value) => Number(value));
-
-      if (!Number.isNaN(playDateTime.getTime())) {
-        playDateTime.setHours(
-          Number.isFinite(hours) ? hours : 0,
-          Number.isFinite(minutes) ? minutes : 0,
-          0,
-          0
-        );
-
-        const diffHours =
-          (playDateTime.getTime() - Date.now()) / (1000 * 60 * 60);
-        if (diffHours < 2) {
-          throw new ApiError(
-            StatusCodes.BAD_REQUEST,
-            "Chỉ có thể hủy booking trước 2 giờ"
-          );
-        }
-      }
-    }
+  const existingRequest = await bookingModel.getCancellationRequestByBooking(
+    bookingCode
+  );
+  if (existingRequest && existingRequest.Status === "pending") {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Bạn đã gửi yêu cầu hủy cho booking này. Vui lòng chờ chủ sân xử lý."
+    );
   }
 
-  await bookingModel.setBookingStatus(bookingCode, "cancelled");
-  await bookingModel.setBookingSlotsStatus(bookingCode, "cancelled");
-  await bookingModel.resetFieldSlotsToAvailable(bookingCode);
+  return await createCancellationRequest(booking, userId, reason);
+}
 
-  await cartService.removeEntriesForBookings([bookingCode]);
-
-  if (booking.PaymentStatus === "paid") {
-    const refundReason = reason || "Customer requested cancellation";
-    await bookingModel.insertBookingRefund(
-      bookingCode,
-      Number(booking.TotalPrice || 0),
-      refundReason
+export async function respondCancellationRequestByToken(
+  token: string,
+  decision: "approve" | "reject"
+) {
+  if (!token || !decision) {
+    throw new ApiError(
+      StatusCodes.BAD_REQUEST,
+      "Thiếu mã xác thực hoặc quyết định"
     );
+  }
 
-    const shopCode = await bookingModel.getFieldShopCode(booking.FieldCode);
-    if (shopCode) {
-      await paymentModel.debitShopWallet(
-        Number(shopCode),
-        Number(booking.NetToShop || 0)
+  const request = await bookingModel.getCancellationRequestByToken(token);
+  if (!request) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Yêu cầu hủy sân không tồn tại hoặc đã hết hạn"
+    );
+  }
+
+  if (request.Status !== "pending") {
+    throw new ApiError(
+      StatusCodes.GONE,
+      "Yêu cầu hủy sân đã được xử lý trước đó"
+    );
+  }
+
+  const booking = await bookingModel.getBookingDetail(request.BookingCode);
+  if (!booking) {
+    throw new ApiError(
+      StatusCodes.NOT_FOUND,
+      "Không tìm thấy thông tin booking cho yêu cầu này"
+    );
+  }
+
+  if (decision === "approve") {
+    await finalizeApprovedCancellation(booking, request);
+  }
+
+  await bookingModel.updateCancellationRequestStatus(request.RequestID, {
+    status: decision === "approve" ? "approved" : "rejected",
+  });
+
+  if (decision === "reject") {
+    const fallbackStatus =
+      request.PreviousStatus &&
+      request.PreviousStatus !== "cancellation_pending"
+        ? request.PreviousStatus
+        : booking.BookingStatus || "pending";
+    await bookingModel.setBookingStatus(
+      request.BookingCode,
+      fallbackStatus as string
+    );
+  }
+
+  const customerEmail =
+    booking.CustomerEmail || request.CustomerEmail || undefined;
+
+  if (customerEmail) {
+    try {
+      await sendCancellationDecisionEmail({
+        to: customerEmail,
+        approved: decision === "approve",
+        bookingCode: request.BookingCode,
+        refundAmount: request.RefundAmount,
+        shopName: booking.ShopName,
+        fieldName: booking.FieldName,
+      });
+    } catch (error) {
+      console.error(
+        "[mail] Failed to send cancellation decision email:",
+        error
       );
     }
   }
 
   return {
-    bookingCode,
-    status: "cancelled" as const,
+    bookingCode: request.BookingCode,
+    decision: decision === "approve" ? "approved" : "rejected",
+    refundAmount: request.RefundAmount,
   };
 }
 
@@ -953,7 +1215,12 @@ export async function verifyBookingCheckin(
 
 export async function updateBookingStatus(
   bookingCode: number,
-  status: "pending" | "confirmed" | "completed" | "cancelled"
+  status:
+    | "pending"
+    | "confirmed"
+    | "completed"
+    | "cancelled"
+    | "cancellation_pending"
 ) {
   const detail = await bookingModel.getBookingDetail(bookingCode);
   if (!detail) {
@@ -962,10 +1229,11 @@ export async function updateBookingStatus(
 
   const currentStatus = detail.BookingStatus as string;
   const allowedTransitions: Record<string, string[]> = {
-    pending: ["confirmed", "cancelled"],
-    confirmed: ["completed", "cancelled"],
+    pending: ["confirmed", "cancelled", "cancellation_pending"],
+    confirmed: ["completed", "cancelled", "cancellation_pending"],
     completed: [],
     cancelled: [],
+    cancellation_pending: ["cancelled", "confirmed", "pending"],
   };
 
   if (!allowedTransitions[currentStatus]?.includes(status)) {
@@ -1062,6 +1330,22 @@ export async function cancelStalePendingBookingsForShop(shopCode: number) {
 
   await bookingModel.cancelExpiredBookings(codes);
   await cartService.removeEntriesForBookings(codes);
+}
+
+export async function autoCompleteFinishedBookings() {
+  try {
+    const updated = await bookingModel.markPastPaidBookingsCompleted();
+    if (updated > 0) {
+      console.log(
+        `[booking] Đã chuyển ${updated} booking sang trạng thái hoàn tất.`
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[booking] Failed to auto-complete finished bookings:",
+      error
+    );
+  }
 }
 
 const bookingService = {

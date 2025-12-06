@@ -19,7 +19,10 @@ import bookingRouter from "./routes/booking.routes";
 import cartRouter from "./routes/cart.routes";
 
 import { errorHandlingMiddleware } from "./middlewares/errorMiddlewares";
-import { cleanupExpiredHeldSlots } from "./services/booking.service";
+import {
+  autoCompleteFinishedBookings,
+  cleanupExpiredHeldSlots,
+} from "./services/booking.service";
 
 const app = express();
 
@@ -143,6 +146,26 @@ app.get("/healthz", (_req, res) => {
 app.use(errorHandlingMiddleware);
 
 const PORT = process.env.PORT || 5050;
+const slotCleanupInterval =
+  Number(process.env.HELD_SLOT_CLEANUP_INTERVAL_MS) || 5 * 60 * 1000;
+const autoCompleteInterval =
+  Number(process.env.AUTO_COMPLETE_BOOKINGS_INTERVAL_MS) || 10 * 60 * 1000;
+
+setInterval(() => {
+  cleanupExpiredHeldSlots().catch((error) =>
+    console.error("[booking] cleanup failed:", error)
+  );
+}, slotCleanupInterval);
+
+setInterval(() => {
+  autoCompleteFinishedBookings().catch((error) =>
+    console.error("[booking] auto-complete failed:", error)
+  );
+}, autoCompleteInterval);
+
+autoCompleteFinishedBookings().catch((error) =>
+  console.error("[booking] initial auto-complete failed:", error)
+);
 
 app.listen(PORT, () => {
   console.log("Server is running on:", `${process.env.HOST}:${PORT}`);

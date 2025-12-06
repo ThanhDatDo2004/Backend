@@ -18,6 +18,7 @@ const payment_routes_1 = __importDefault(require("./routes/payment.routes"));
 const booking_routes_1 = __importDefault(require("./routes/booking.routes"));
 const cart_routes_1 = __importDefault(require("./routes/cart.routes"));
 const errorMiddlewares_1 = require("./middlewares/errorMiddlewares");
+const booking_service_1 = require("./services/booking.service");
 const app = (0, express_1.default)();
 const defaultAllowedOrigins = [
     "https://thuere.site",
@@ -119,6 +120,15 @@ app.get("/healthz", (_req, res) => {
 // Error handler
 app.use(errorMiddlewares_1.errorHandlingMiddleware);
 const PORT = process.env.PORT || 5050;
+const slotCleanupInterval = Number(process.env.HELD_SLOT_CLEANUP_INTERVAL_MS) || 5 * 60 * 1000;
+const autoCompleteInterval = Number(process.env.AUTO_COMPLETE_BOOKINGS_INTERVAL_MS) || 10 * 60 * 1000;
+setInterval(() => {
+    (0, booking_service_1.cleanupExpiredHeldSlots)().catch((error) => console.error("[booking] cleanup failed:", error));
+}, slotCleanupInterval);
+setInterval(() => {
+    (0, booking_service_1.autoCompleteFinishedBookings)().catch((error) => console.error("[booking] auto-complete failed:", error));
+}, autoCompleteInterval);
+(0, booking_service_1.autoCompleteFinishedBookings)().catch((error) => console.error("[booking] initial auto-complete failed:", error));
 app.listen(PORT, () => {
     console.log("Server is running on:", `${process.env.HOST}:${PORT}`);
 });

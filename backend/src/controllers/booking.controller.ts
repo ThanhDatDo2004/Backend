@@ -12,6 +12,7 @@ import {
   getCustomerBookingDetail,
   listCustomerBookings,
   listShopBookingsForOwner,
+  respondCancellationRequestByToken,
   updateBookingStatus,
   verifyBookingCheckin,
 } from "../services/booking.service";
@@ -349,11 +350,54 @@ const bookingController = {
       return apiResponse.success(
         res,
         result,
-        "Hủy booking thành công",
+        result?.message || "Hủy booking thành công",
         StatusCodes.OK
       );
     } catch (error) {
       next(new ApiError(500, (error as Error)?.message || "Lỗi hủy booking"));
+    }
+  },
+
+  async respondCancellationRequest(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) {
+    try {
+      const token = typeof req.body?.token === "string" ? req.body.token : "";
+      const decisionRaw =
+        typeof req.body?.decision === "string" ? req.body.decision : "";
+      if (!token || !decisionRaw) {
+        return next(
+          new ApiError(
+            StatusCodes.BAD_REQUEST,
+            "Thiếu token hoặc quyết định xử lý"
+          )
+        );
+      }
+
+      const normalizedDecision = decisionRaw.toLowerCase().startsWith("a")
+        ? "approve"
+        : "reject";
+
+      const result = await respondCancellationRequestByToken(
+        token.trim(),
+        normalizedDecision as "approve" | "reject"
+      );
+
+      const message =
+        normalizedDecision === "approve"
+          ? "Đã chấp nhận yêu cầu hủy sân"
+          : "Đã từ chối yêu cầu hủy sân";
+
+      return apiResponse.success(res, result, message, StatusCodes.OK);
+    } catch (error) {
+      next(
+        new ApiError(
+          (error as ApiError)?.statusCode || 500,
+          (error as Error)?.message || "Không thể xử lý yêu cầu hủy sân"
+        )
+      );
     }
   },
 
