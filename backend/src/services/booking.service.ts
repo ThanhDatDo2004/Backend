@@ -107,20 +107,40 @@ const normalizeDate = (value: string) => {
 const createHoldExpiryDeadline = () => new Date(Date.now() + HOLD_DURATION_MS);
 
 const buildSlotDateTime = (playDate: string, time: string) => {
-  const baseDate = new Date(playDate);
-  if (Number.isNaN(baseDate.getTime())) {
+  const [year, month, day] = String(playDate ?? "")
+    .split("-")
+    .map((value) => Number(value));
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
     return null;
   }
+
+  const slotDate = new Date(
+    year,
+    Number(month) - 1,
+    day,
+    0,
+    0,
+    0,
+    0
+  );
+
   const [hours, minutes] = String(time ?? "")
     .split(":")
     .map((value) => Number(value));
-  baseDate.setHours(
+
+  slotDate.setHours(
     Number.isFinite(hours) ? hours : 0,
     Number.isFinite(minutes) ? minutes : 0,
     0,
     0
   );
-  return baseDate;
+
+  return slotDate;
 };
 
 const calculateHoursUntil = (playDate: string, time: string) => {
