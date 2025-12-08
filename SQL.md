@@ -247,6 +247,50 @@ CONSTRAINT `FK_BookingCarts_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bo
 CONSTRAINT `FK_BookingCarts_Users` FOREIGN KEY (`UserID`) REFERENCES `Users` (`UserID`)
 ) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- thuere.Booking_Cancellation_Requests definition
+
+CREATE TABLE `Booking_Cancellation_Requests` (
+`RequestID` int NOT NULL AUTO_INCREMENT,
+`BookingCode` int NOT NULL,
+`CustomerUserID` int NOT NULL,
+`ShopCode` int NOT NULL,
+`FieldCode` int DEFAULT NULL,
+`Reason` varchar(255) DEFAULT NULL,
+`Status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+`PenaltyPercent` decimal(5,2) NOT NULL DEFAULT '50.00',
+`RefundAmount` decimal(14,2) NOT NULL DEFAULT '0.00',
+`DecisionToken` varchar(128) NOT NULL,
+`DecisionAt` datetime DEFAULT NULL,
+`DecisionBy` int DEFAULT NULL,
+`CustomerPhone` varchar(30) DEFAULT NULL,
+`CustomerName` varchar(120) DEFAULT NULL,
+`CustomerEmail` varchar(190) DEFAULT NULL,
+`PreviousStatus` enum('pending','confirmed','completed','cancelled','cancellation_pending') DEFAULT NULL,
+`CreateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`UpdateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (`RequestID`),
+UNIQUE KEY `UK_Cancellation_Booking` (`BookingCode`),
+KEY `IDX_Cancellation_Status` (`Status`),
+CONSTRAINT `FK_Cancellation_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE,
+CONSTRAINT `FK_Cancellation_Users` FOREIGN KEY (`CustomerUserID`) REFERENCES `Users` (`UserID`),
+CONSTRAINT `FK_Cancellation_Shops` FOREIGN KEY (`ShopCode`) REFERENCES `Shops` (`ShopCode`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- thuere.Booking_Refunds definition
+
+CREATE TABLE `Booking_Refunds` (
+`RefundID` int NOT NULL AUTO_INCREMENT,
+`BookingCode` int NOT NULL,
+`RefundAmount` decimal(14,2) NOT NULL DEFAULT '0.00',
+`Reason` varchar(255) DEFAULT NULL,
+`Status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+`RequestedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`CreateAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+PRIMARY KEY (`RefundID`),
+KEY `IDX_BookingRefunds_BookingCode` (`BookingCode`),
+CONSTRAINT `FK_BookingRefunds_Bookings` FOREIGN KEY (`BookingCode`) REFERENCES `Bookings` (`BookingCode`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- thuere.Booking_Slots definition
 
 CREATE TABLE `Booking_Slots` (
@@ -284,7 +328,7 @@ CREATE TABLE `Bookings` (
 `PlatformFee` decimal(14,2) NOT NULL,
 `NetToShop` decimal(14,2) NOT NULL,
 `DiscountAmount` decimal(14,2) NOT NULL DEFAULT '0.00',
-`BookingStatus` enum('pending','confirmed','cancelled','completed') DEFAULT 'pending',
+`BookingStatus` enum('pending','confirmed','cancelled','completed','cancellation_pending') DEFAULT 'pending',
 `PaymentID` int DEFAULT NULL,
 `PromotionID` int DEFAULT NULL,
 `PromotionCode` varchar(50) DEFAULT NULL,
