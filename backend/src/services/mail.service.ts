@@ -197,16 +197,13 @@ export async function sendCancellationRequestEmail(
           <li>Số điện thoại khách: ${customerPhone || "Chưa cung cấp"}</li>
           <li>Email khách: ${customerEmail || "Chưa cung cấp"}</li>
           <li>Khung giờ: ${slots.length ? slots.join(", ") : "Đang cập nhật"}</li>
-          <li>Hoàn tiền dự kiến: ${formatCurrency(refundAmount)} (khách mất ${penaltyPercent}% phí đặt)</li>
+          <li>Hoàn tiền dự kiến: ${refundAmount} VNĐ (khách mất ${penaltyPercent}% phí đặt)</li>
         </ul>
-        <p>Anh/chị có thể xử lý yêu cầu này ngay:</p>
+        <p>Bạn có thể xử lý yêu cầu này ngay:</p>
         <p>
           <a href="${acceptUrl}" style="background:#16a34a;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;margin-right:12px;">Đồng ý hủy</a>
           <a href="${rejectUrl}" style="background:#dc2626;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;">Từ chối</a>
         </p>
-        <p>Nếu các nút không hoạt động, sao chép các liên kết sau vào trình duyệt:</p>
-        <p>Đồng ý: <br/><a href="${acceptUrl}">${acceptUrl}</a></p>
-        <p>Từ chối: <br/><a href="${rejectUrl}">${rejectUrl}</a></p>
         <p>Trân trọng,<br/>${appName}</p>
       </div>
     `,

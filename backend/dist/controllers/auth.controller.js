@@ -146,7 +146,6 @@ const authController = {
             await (0, mail_service_1.sendResetPasswordEmail)(email, resetLink);
         }
         catch (error) {
-            // Ghi lại lỗi nhưng không báo cho người dùng để bảo mật
             console.error(`[FORGOT_PASSWORD] Failed to send email to ${email}:`, error);
         }
         return genericSuccessResponse();
