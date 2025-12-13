@@ -44,7 +44,7 @@ router.get("/:shopCode/fields", shopFieldController.list);
 router.post(
   "/:shopCode/fields",
   requireAuth,
-  requireAdmin(),
+  requireShopOwner(),
   fieldImagesUpload,
   shopFieldController.create
 );
