@@ -7,7 +7,6 @@ import shopService from "../services/shop.service";
 
 const payoutController = {
   /**
-   * Tạo yêu cầu rút tiền (Shop)
    * POST /api/shops/me/payout-requests
    */
   async createPayoutRequest(req: Request, res: Response, next: NextFunction) {
@@ -42,8 +41,6 @@ const payoutController = {
       }
 
       const shopCode = Number(shop.shop_code);
-
-      // Nếu không gửi bank_id, sẽ dùng default (bank_id = 0)
       const bankId = bank_id || 0;
 
       console.log(`[Payout Controller] Request data:`, {

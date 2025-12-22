@@ -28,18 +28,30 @@ const authService = {
     });
   },
 
-  verifyToken(token: string): any {
-    if (!JWT_SECRET_KEY) {
-      throw new Error(
-        "JWT secret key is not defined in environment variables."
-      );
+ verifyToken(token?: string): any {
+  if (!JWT_SECRET_KEY) {
+    throw new Error("JWT secret key is not defined.");
+  }
+
+  // ✅ Check token trước
+  if (!token || token === "undefined" || token === "null") {
+    return null;
+  }
+
+  try {
+    return jwt.verify(token, JWT_SECRET_KEY);
+  } catch (error: any) {
+    // phân biệt lỗi để debug
+    if (error.name === "TokenExpiredError") {
+      throw new Error("Token expired");
     }
-    try {
-      return jwt.verify(token, JWT_SECRET_KEY) as any;
-    } catch (error) {
+    if (error.name === "JsonWebTokenError") {
       throw new Error("Invalid token");
     }
-  },
+    throw error;
+  }
+},
+
 
   async hashPassword(password: string): Promise<string> {
     const saltRounds = 10;

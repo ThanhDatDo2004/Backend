@@ -454,7 +454,6 @@ const fieldService = {
     const images = await fieldModel.getImagesByCodes(fieldCode, imageCodes);
     if (!images.length) return [];
 
-    // Try deleting storage objects best-effort
     const deletions: Promise<unknown>[] = [];
     for (const img of images as Array<{ image_url: string }>) {
       const imageUrl = (img.image_url || "").trim();

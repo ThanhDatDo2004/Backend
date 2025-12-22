@@ -9,7 +9,6 @@ import apiResponse from "../core/respone";
 const fieldQuantityController = {
   /**
    * GET /api/fields/:fieldCode/available-quantities
-   * Get available quantities for a specific time slot
    */
   async getAvailableQuantities(
     req: Request,
@@ -29,8 +28,6 @@ const fieldQuantityController = {
         );
       }
 
-      // Validate field exists
-
       const field = await fieldModel.findById(Number(fieldCode));
       if (!field) {
         return next(
@@ -38,7 +35,6 @@ const fieldQuantityController = {
         );
       }
 
-      // Get availability
       const availability = await fieldQuantityService.getAvailableSlot(
         Number(fieldCode),
         String(playDate),
@@ -59,7 +55,6 @@ const fieldQuantityController = {
 
   /**
    * GET /api/fields/:fieldCode/quantities
-   * Get all quantities for a field
    */
   async getQuantities(req: Request, res: Response, next: NextFunction) {
     try {
@@ -93,7 +88,6 @@ const fieldQuantityController = {
 
   /**
    * PUT /api/fields/:fieldCode/quantities/:quantityNumber/status
-   * Update quantity status (for admin - maintenance, inactive)
    */
   async updateQuantityStatus(req: Request, res: Response, next: NextFunction) {
     try {
@@ -121,8 +115,6 @@ const fieldQuantityController = {
         );
       }
 
-      // Validate ownership
-
       const field = await fieldModel.findById(Number(fieldCode));
       if (!field) {
         return next(
@@ -140,7 +132,6 @@ const fieldQuantityController = {
         );
       }
 
-      // Find quantity by fieldCode and quantityNumber
       const quantities = await fieldQuantityService.getQuantitiesForField(
         Number(fieldCode)
       );
@@ -149,12 +140,8 @@ const fieldQuantityController = {
       );
 
       if (!quantity) {
-        return next(
-          new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân")
-        );
+        return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy sân"));
       }
-
-      // Update status
 
       const updated = await fieldQuantityService.updateQuantityStatus(
         quantity.quantity_id,
@@ -174,7 +161,6 @@ const fieldQuantityController = {
 
   /**
    * GET /api/fields/:fieldCode/quantities/:quantityId
-   * Get single quantity details
    */
   async getQuantityById(req: Request, res: Response, next: NextFunction) {
     try {

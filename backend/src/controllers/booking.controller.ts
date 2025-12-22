@@ -557,7 +557,7 @@ const bookingController = {
   },
 
   /**
-   * Confirm a booking - also increment field Rent
+   * Confirm a booking 
    * PUT /api/bookings/:bookingCode/confirm
    */
   async confirmBooking(req: Request, res: Response, next: NextFunction) {
@@ -588,7 +588,7 @@ const bookingController = {
   },
 
   /**
-   * Cancel a booking - also decrement field Rent if it was confirmed
+   * Cancel a booking 
    * PUT /api/bookings/:bookingCode/cancel
    */
   async cancelBookingMethod(req: Request, res: Response, next: NextFunction) {
@@ -615,7 +615,7 @@ const bookingController = {
       );
     } catch (error) {
       next(
-        new ApiError(500, (error as Error)?.message || "Cancel booking failed")
+        new ApiError(500, (error as Error)?.message || "Huỷ booking thất bại")
       );
     }
   },

@@ -4,7 +4,6 @@ import apiResponse from "../core/respone";
 import ApiError from "../utils/apiErrors";
 import paymentService from "../services/payment.service";
 
-// MySQL Row type fallback
 type BookingInfo = {
   CustomerUserID?: number | null;
   ShopOwnerUserID?: number | null;
@@ -14,7 +13,6 @@ type BookingInfo = {
   FieldName?: string;
 };
 
-// Fallback type for Payment row
 type PaymentRow = {
   PaymentID: number;
   BookingCode: number;
@@ -73,9 +71,6 @@ function ensureBookingAccess(req: Request, booking: BookingInfo): void {
 }
 
 const paymentController = {
-  // ============================================
-  // INITIATE PAYMENT
-  // ============================================
   async initiatePayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
@@ -180,9 +175,7 @@ const paymentController = {
     }
   },
 
-  // ============================================
-  // GET PAYMENT STATUS
-  // ============================================
+
   async getPaymentStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
@@ -250,9 +243,7 @@ const paymentController = {
     }
   },
 
-  // ============================================
-  // VERIFY PAYMENT
-  // ============================================
+
   async verifyPayment(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;
@@ -379,18 +370,6 @@ const paymentController = {
           ? normalizedTransferAmount
           : null;
 
-      // DEBUG: Log webhook received
-      console.log("=== SePay Webhook Received ===");
-      console.log("ID:", id);
-      console.log("TransferType:", transferType);
-      console.log("Amount:", transferAmountValue ?? transferAmount);
-      console.log("Content:", content);
-      console.log("Description:", description);
-      console.log("Des:", des);
-      console.log("ReferenceCode:", referenceCode);
-      console.log("==============================");
-
-      // Idempotency: nếu đã log id này rồi thì coi như xử lý xong
       try {
         const duplicate = await paymentService.hasWebhookLogByExternalId(
           "sepay_webhook",
@@ -406,12 +385,11 @@ const paymentController = {
         }
       } catch (_) {}
 
-      // Helper: extract booking code number
       const extractBK = (text?: string) => {
         if (!text || typeof text !== "string") return null;
         const m1 = text.match(/BK[-_]?(\d+)/i);
         if (m1 && m1[1]) return Number(m1[1]);
-        const m2 = text.match(/(\d{1,9})/); // fallback: any digits
+        const m2 = text.match(/(\d{1,9})/); 
         if (m2 && m2[1]) return Number(m2[1]);
         return null;
       };
@@ -437,7 +415,6 @@ const paymentController = {
         }
       }
 
-      // Fallback: match by amount to the most recent pending payment
       if (!payment && isIncomingTransfer && transferAmountValue) {
         try {
           const maybePayment = await paymentService.findPendingPaymentByAmount(
@@ -449,7 +426,6 @@ const paymentController = {
         } catch (_) {}
       }
 
-      // Log webhook (nếu có payment) để không lỗi FK
       if (payment) {
         await paymentService.logPaymentAction(
           payment.PaymentID,
@@ -462,7 +438,6 @@ const paymentController = {
         );
       }
 
-      // Nếu là giao dịch vào (in) và có mapping payment thì xác nhận thanh toán
       if (isIncomingTransfer && payment) {
         try {
           await paymentService.updatePaymentStatus(
@@ -498,7 +473,6 @@ const paymentController = {
         }
       }
 
-      // Không match được payment: vẫn trả success để tránh retry loop
       return apiResponse.success(
         res,
         { success: true, matched: !!payment },
@@ -517,9 +491,6 @@ const paymentController = {
     }
   },
 
-  // ============================================
-  // RESULT
-  // ============================================
   async getPaymentResult(req: Request, res: Response, next: NextFunction) {
     try {
       const { bookingCode } = req.params;

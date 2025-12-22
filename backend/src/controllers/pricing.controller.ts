@@ -35,7 +35,6 @@ const updateOperatingHoursSchema = z.object({
     .regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, "Thời gian kết thúc phải có định dạng HH:MM")
     .optional()
 }).refine(data => {
-  // At least one field must be provided for update
   return Object.keys(data).length > 0;
 }, {
   message: "Phải cung cấp ít nhất một trường để cập nhật"

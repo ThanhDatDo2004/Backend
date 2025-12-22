@@ -56,9 +56,9 @@ const fieldController = {
         pageSize: toNumber(pageSizeParam),
         sortBy: sortKey,
         sortDir: sortDirection,
-        status: queryString(status) ?? "active", // Mặc định chỉ lấy sân 'active'
+        status: queryString(status) ?? "active", 
         shopStatus: queryString(shopStatus),
-        shopActive: 1, // Chỉ lấy sân của shop có chủ shop đang hoạt động
+        shopActive: 1, 
       });
 
       const {
@@ -245,7 +245,6 @@ const fieldController = {
         );
       }
 
-      // Release expired held slots (cập nhật đầy đủ booking + payment)
       await releaseExpiredHeldSlots(fieldCode);
 
       const slots = await fieldService.getAvailability(fieldCode, date);
@@ -253,7 +252,7 @@ const fieldController = {
       return apiResponse.success(
         res,
         { field_code: fieldCode, date: date ?? null, slots },
-        "Fetched field availability successfully",
+        "Lấy lịch sử dụng sân thành công",
         StatusCodes.OK
       );
     } catch (error) {
@@ -292,7 +291,6 @@ const fieldController = {
   },
 
   /**
-   * Get field statistics including booking count
    * GET /api/fields/:fieldCode/stats
    */
   async getFieldStats(req: Request, res: Response, next: NextFunction) {
@@ -308,13 +306,12 @@ const fieldController = {
       return apiResponse.success(res, stats, "Thống kê sân", StatusCodes.OK);
     } catch (error) {
       next(
-        new ApiError(500, (error as Error)?.message || "Get field stats failed")
+        new ApiError(500, (error as Error)?.message || "Lấy thống kê sân thất bại")
       );
     }
   },
 
   /**
-   * List fields with booking count for a shop
    * GET /api/fields/shop/:shopCode/with-rent
    */
   async listFieldsWithRent(req: Request, res: Response, next: NextFunction) {
@@ -346,15 +343,13 @@ const fieldController = {
       );
     } catch (error) {
       next(
-        new ApiError(500, (error as Error)?.message || "List fields failed")
+        new ApiError(500, (error as Error)?.message || "Lấy danh sách sân thất bại")
       );
     }
   },
 
   /**
-   * Sync/Fix field rent count from confirmed bookings
    * PUT /api/fields/:fieldCode/sync-rent
-   * Admin endpoint to fix mismatched rent counts
    */
   async syncFieldRent(req: Request, res: Response, next: NextFunction) {
     try {
@@ -365,18 +360,17 @@ const fieldController = {
       return apiResponse.success(
         res,
         { FieldCode: fieldCode, Rent: actualRent },
-        `Rent synced to ${actualRent}`,
+        `${actualRent}`,
         StatusCodes.OK
       );
     } catch (error) {
       next(
-        new ApiError(500, (error as Error)?.message || "Sync field rent failed")
+        new ApiError(500, (error as Error)?.message || "Tính lại lượt đặt thất bại")
       );
     }
   },
 
   /**
-   * Sync all fields rent count (admin/maintenance endpoint)
    * PUT /api/fields/sync/all
    */
   async syncAllFieldsRent(req: Request, res: Response, next: NextFunction) {
@@ -386,14 +380,14 @@ const fieldController = {
       return apiResponse.success(
         res,
         { synced: syncedCount },
-        `Synced ${syncedCount} fields`,
+        `${syncedCount} sân`,
         StatusCodes.OK
       );
     } catch (error) {
       next(
         new ApiError(
           500,
-          (error as Error)?.message || "Sync all fields rent failed"
+          (error as Error)?.message || "Tính lại lượt đặt tất cả sân thất bại"
         )
       );
     }

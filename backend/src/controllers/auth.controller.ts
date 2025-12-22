@@ -63,7 +63,7 @@ const authController = {
       return apiResponse.success(
         res,
         { ...userToken, token, refreshToken },
-        "Login Success",
+        "Đăng nhập thành công",
         200
       );
     } catch (error: any) {
@@ -180,9 +180,8 @@ const authController = {
     try {
       await sendResetPasswordEmail(email, resetLink);
     } catch (error) {
-      // Ghi lại lỗi nhưng không báo cho người dùng để bảo mật
       console.error(
-        `[FORGOT_PASSWORD] Failed to send email to ${email}:`,
+        `[FORGOT_PASSWORD] thất bại gửi email tới ${email}:`,
         error
       );
     }

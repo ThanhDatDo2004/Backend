@@ -58,7 +58,7 @@ const adminController = {
   async listUsers(req: Request, res: Response, next: NextFunction) {
     try {
       const users = await adminService.listUsers();
-      return apiResponse.success(res, users, "Fetched users successfully", StatusCodes.OK);
+      return apiResponse.success(res, users, "Lấy danh sách người dùng thành công", StatusCodes.OK);
     } catch (error) {
       next(error);
     }
@@ -67,7 +67,7 @@ const adminController = {
   async listUserLevels(req: Request, res: Response, next: NextFunction) {
     try {
       const levels = await adminService.listUserLevels();
-      return apiResponse.success(res, levels, "Fetched user levels successfully", StatusCodes.OK);
+      return apiResponse.success(res, levels, "Lấy danh sách cấp độ thành công", StatusCodes.OK);
     } catch (error) {
       next(error);
     }
@@ -104,7 +104,7 @@ const adminController = {
   async listShopRequests(req: Request, res: Response, next: NextFunction) {
     try {
       const requests = await adminService.listShopRequests();
-      return apiResponse.success(res, requests, "Fetched shop requests successfully", StatusCodes.OK);
+      return apiResponse.success(res, requests, "Lấy danh sách yêu cầu shop thành công", StatusCodes.OK);
     } catch (error) {
       next(error);
     }
@@ -122,13 +122,12 @@ const adminController = {
         return next(new ApiError(StatusCodes.NOT_FOUND, "Không tìm thấy yêu cầu"));
       }
 
-      return apiResponse.success(res, request, "Fetched shop request successfully", StatusCodes.OK);
+      return apiResponse.success(res, request, "Lấy yêu cầu shop thành công", StatusCodes.OK);
     } catch (error) {
       next(error);
     }
   },
 
-  /** Chỉ giữ enum rất mỏng, không Zod */
   async updateShopRequestStatus(req: Request, res: Response, next: NextFunction) {
     try {
       const id = toPosInt(req.params.id);
@@ -174,7 +173,6 @@ const adminController = {
     }
   },
 
-  /** Bộ lọc tài chính “tự nhiên”: chấp nhận chuỗi ngày thoáng, số ép mềm, có mặc định */
   async listFinanceBookings(req: Request, res: Response, next: NextFunction) {
     try {
       const q = req.query as any;
